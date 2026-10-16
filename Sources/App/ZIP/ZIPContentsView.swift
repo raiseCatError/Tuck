@@ -31,6 +31,7 @@ private struct ZIPContentsView: View {
     @State private var entries: [ZipEntry] = []
     @State private var selected: Set<String> = []
     @State private var filter = ""
+    @State private var sort = "Archive order"
     @State private var message = "Inspecting ZIP directory…"
     @State private var loading = true
     @State private var jobId: UUID?
@@ -52,15 +53,19 @@ private struct ZIPContentsView: View {
             if !entries.isEmpty {
                 HStack {
                     TextField("Search files", text: $filter)
+                    Picker("Sort", selection: $sort) {
+                        Text("Archive order").tag("Archive order")
+                        Text("Name").tag("Name")
+                        Text("Original size").tag("Original size")
+                        Text("Date").tag("Date")
+                    }.frame(width: 155)
                     Button("Extract Selected…") { chooseFolder(selectedOnly: true) }
                         .disabled(selected.isEmpty || jobId != nil)
                     Button("Extract All…") { chooseFolder(selectedOnly: false) }
                         .disabled(jobId != nil)
                 }
                 List {
-                    ForEach(entries.filter {
-                        filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter)
-                    }) { entry in
+                    ForEach(displayedEntries) { entry in
                         HStack {
                             Toggle("", isOn: Binding(
                                 get: { selected.contains(entry.name) },
@@ -70,9 +75,17 @@ private struct ZIPContentsView: View {
                             Image(systemName: entry.isDirectory ? "folder" : "doc")
                             Text(entry.name).textSelection(.enabled).lineLimit(2)
                             Spacer()
-                            Text(ByteCountFormatter.string(fromByteCount: Int64(entry.uncompressed),
-                                                           countStyle: .file))
-                                .foregroundStyle(.secondary).monospacedDigit()
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text(ByteCountFormatter.string(fromByteCount: Int64(entry.uncompressed),
+                                                               countStyle: .file))
+                                Text("Packed: " + ByteCountFormatter.string(
+                                    fromByteCount: Int64(entry.compressed), countStyle: .file))
+                                    .font(.caption2)
+                                if let date = entry.modified {
+                                    Text(date, style: .date).font(.caption2)
+                                }
+                            }
+                            .foregroundStyle(.secondary).monospacedDigit()
                         }
                     }
                 }
@@ -103,6 +116,20 @@ private struct ZIPContentsView: View {
                 message = "\(found.count) safe ZIP entries available."
             } catch { message = error.localizedDescription }
             loading = false
+        }
+    }
+
+    private var displayedEntries: [ZipEntry] {
+        let items = entries.filter {
+            filter.isEmpty || $0.name.localizedCaseInsensitiveContains(filter)
+        }
+        switch sort {
+        case "Name": return items.sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+        case "Original size": return items.sorted { $0.uncompressed > $1.uncompressed }
+        case "Date": return items.sorted { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
+        default: return items
         }
     }
 
