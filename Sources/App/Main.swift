@@ -166,6 +166,11 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             let fmt = request.argument.flatMap(CopyAsFormat.init(rawValue:)) ?? .absolutePath
             runCopyAs(paths: request.paths, format: fmt)
 
+        case "findDuplicates":
+            DuplicateWindow.show(paths: request.paths)
+        case "inspectZIP":
+            ZIPWindow.show(paths: request.paths)
+
         case "copyTo", "moveTo":
             runTransfer(paths: request.paths, argument: request.argument,
                         mode: request.operation == "moveTo" ? .move : .copy)
