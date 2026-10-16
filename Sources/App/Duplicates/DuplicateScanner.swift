@@ -91,10 +91,11 @@ private final class DuplicateModel: ObservableObject {
     let token = CancellationFlag()
 
     func begin(_ roots: [URL]) {
+        let cancellation = token
         Task.detached(priority: .utility) { [weak self] in
             do {
                 let groups = try DuplicateScanner.scan(roots,
-                    isCancelled: { [weak self] in self?.token.isCancelled ?? true },
+                    isCancelled: { cancellation.isCancelled },
                     progress: { [weak self] count in
                         Task { @MainActor in self?.visited = count }
                     })
