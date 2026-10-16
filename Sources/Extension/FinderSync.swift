@@ -118,6 +118,8 @@ final class TuckFinderSync: FIFinderSync {
         let imageExts = ["jpg", "jpeg", "png", "heic", "tif", "tiff", "bmp", "webp", "gif"]
         if kind == .contextualMenuForContainer {
             context = target?.standardizedFileURL.path == FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop").path ? .desktop : .folder
+        } else if !selection.isEmpty && selection.allSatisfy({ $0.pathExtension.lowercased() == "zip" }) {
+            context = .archive
         } else if !selection.isEmpty && selection.allSatisfy({ $0.pathExtension.lowercased() == "pdf" }) {
             context = .pdf
         } else if !selection.isEmpty && selection.allSatisfy({ imageExts.contains($0.pathExtension.lowercased()) }) {
@@ -153,6 +155,10 @@ final class TuckFinderSync: FIFinderSync {
                 item.action = #selector(advancedRename(_:))
             case .destinations:
                 item.submenu = makeDestinationMenu()
+            case .duplicates:
+                item.action = #selector(findDuplicates(_:))
+            case .zipInspector:
+                item.action = #selector(inspectZIP(_:))
             }
             root.addItem(item)
         }
@@ -495,6 +501,20 @@ final class TuckFinderSync: FIFinderSync {
             ? "choose" : (sender.representedObject as? String)
         guard let favorite else { return }
         dispatch(copy ? "copyTo" : "moveTo", paths: selection.map(\.path), argument: favorite)
+    }
+
+    @objc func findDuplicates(_ sender: NSMenuItem) {
+        let (selection, _) = resolveContext()
+        let folders = selection.filter {
+            (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        }
+        if !folders.isEmpty { dispatch("findDuplicates", paths: folders.map(\.path)) }
+    }
+
+    @objc func inspectZIP(_ sender: NSMenuItem) {
+        let (selection, _) = resolveContext()
+        let archives = selection.filter { $0.pathExtension.lowercased() == "zip" }
+        if !archives.isEmpty { dispatch("inspectZIP", paths: archives.map(\.path)) }
     }
 
     private func dispatch(_ operation: String, paths: [String], argument: String? = nil) {
