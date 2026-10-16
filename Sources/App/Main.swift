@@ -182,11 +182,13 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
     // cooperative cancellation and a completion message only after the worker exits.
     private func queueOperation(title: String, operation: String, paths: [String],
                                 canUndo: Bool = true,
+                                historyItems: [JobItemStatus]? = nil,
                                 worker: @escaping JobManager.Executor) {
         guard !paths.isEmpty else { return }
         let window = ProgressWindow()
         let jobId = JobManager.shared.enqueue(
             title: title, operation: operation, paths: paths, canUndo: canUndo,
+            historyItems: historyItems,
             onComplete: { [weak self] job in
                 window.dismiss()
                 switch job.status {
@@ -519,50 +521,61 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
 
         let alert = NSAlert()
         alert.messageText = "Advanced Batch Rename"
-        alert.informativeText = "Configure find and replace, prefix/suffix, or numbering pattern:"
-        alert.addButton(withTitle: "Rename")
+        alert.informativeText = "Configure find and replace for selected filenames."
+        alert.addButton(withTitle: "Preview")
         alert.addButton(withTitle: "Cancel")
 
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.spacing = 6
-
         let findField = NSTextField(string: "")
-        findField.placeholderString = "Find text (or regex)"
+        findField.placeholderString = "Find text"
         let replaceField = NSTextField(string: "")
         replaceField.placeholderString = "Replace with"
-
         stack.addArrangedSubview(findField)
         stack.addArrangedSubview(replaceField)
-        stack.frame = NSRect(x: 0, y: 0, width: 300, height: 60)
+        stack.frame = NSRect(x: 0, y: 0, width: 330, height: 60)
         alert.accessoryView = stack
 
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard !findField.stringValue.isEmpty else {
+            report("Enter a nonempty search term before renaming.", title: "Invalid Rename")
+            return
+        }
 
-        let rule = RenameRule(op: .findReplace(find: findField.stringValue, replace: replaceField.stringValue, isRegex: false))
+        let rule = RenameRule(op: .findReplace(
+            find: findField.stringValue, replace: replaceField.stringValue, isRegex: false))
         let plan = AdvancedRenameToolkit.preview(urls: urls, rule: rule)
+        let collisions = plan.filter(\.hasCollision)
+        guard collisions.isEmpty else {
+            report("Conflicting destination names detected:\n" +
+                   collisions.prefix(12).map(\.proposedName).joined(separator: "\n"),
+                   title: "Rename Cannot Proceed")
+            return
+        }
 
-        do {
-            let renamed = try AdvancedRenameToolkit.execute(plan: plan)
-            let items = plan.map { JobItemStatus(inputPath: $0.originalURL.path, outputPath: $0.proposedURL.path, status: .completed) }
-            let record = JobRecord(
-                title: "Rename \(renamed.count) file(s)",
-                operation: "advancedRename",
-                finishedAt: Date(),
-                status: .completed,
-                progress: 1.0,
-                progressDetail: "Completed",
-                items: items,
-                outputs: renamed.map(\.path),
-                canUndo: true
-            )
-            JobManager.shared.recordCompletedJob(record)
+        let preview = NSAlert()
+        preview.messageText = "Review \(plan.count) Proposed Rename(s)"
+        let rows = plan.prefix(18).map {
+            "\($0.originalURL.lastPathComponent) → \($0.proposedName)"
+        }.joined(separator: "\n")
+        preview.informativeText = rows + (plan.count > 18 ? "\n… and \(plan.count - 18) more" : "")
+        preview.addButton(withTitle: "Rename Files")
+        preview.addButton(withTitle: "Cancel")
+        guard preview.runModal() == .alertFirstButtonReturn else { return }
 
-            NSWorkspace.shared.activateFileViewerSelecting(renamed)
-            report("Successfully renamed \(renamed.count) file(s). You can undo this action from Settings > Activity.", title: "Rename Complete")
-        } catch {
-            report("Rename failed: \(error.localizedDescription)", title: "Rename Failed")
+        let items = plan.map {
+            JobItemStatus(inputPath: $0.originalURL.path,
+                          outputPath: $0.proposedURL.path, status: .queued)
+        }
+        queueOperation(title: "Rename \(plan.count) file(s)", operation: "advancedRename",
+                       paths: paths, historyItems: items) { token, progress in
+            if token.isCancelled { throw CancellationError() }
+            progress(0.05, "Applying reviewed filename changes…")
+            let outputs = try AdvancedRenameToolkit.execute(plan: plan)
+            progress(1, "Rename complete")
+            return outputs
         }
     }
 
