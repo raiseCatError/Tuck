@@ -35,11 +35,16 @@ final class JobManager: ObservableObject {
     private func loadHistory() {
         guard let data = try? Data(contentsOf: historyFileURL),
               var saved = try? JSONDecoder().decode([JobRecord].self, from: data) else { return }
-        for index in saved.indices where saved[index].status == .running || saved[index].status == .queued {
-            saved[index].status = .failed
-            saved[index].progressDetail = "Interrupted when Tuck closed; previous worker is no longer running."
-            saved[index].finishedAt = Date()
-            saved[index].canUndo = false
+        for index in saved.indices {
+            if saved[index].status == .running || saved[index].status == .queued {
+                saved[index].status = .failed
+                saved[index].progressDetail = "Interrupted when Tuck closed; previous worker is no longer running."
+                saved[index].finishedAt = Date()
+                saved[index].canUndo = false
+            }
+            if saved[index].outputProofs == nil {
+                saved[index].canUndo = false
+            }
         }
         jobs = saved
         persistHistory()
@@ -48,7 +53,13 @@ final class JobManager: ObservableObject {
     private func persistHistory() {
         let recent = Array(jobs.prefix(100))
         guard let data = try? JSONEncoder().encode(recent) else { return }
-        try? data.write(to: historyFileURL, options: .atomic)
+        do {
+            try data.write(to: historyFileURL, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600],
+                                                   ofItemAtPath: historyFileURL.path)
+        } catch {
+            TuckLog.helperLogger.error("history.persist-failed")
+        }
     }
 
     /// Legacy callers may still finish work outside the queue. Protect any
@@ -155,12 +166,15 @@ final class JobManager: ObservableObject {
         activeJobIDs.remove(jobId)
         if jobs[index].status == .completed {
             executors.removeValue(forKey: jobId)
-            NSWorkspace.shared.activateFileViewerSelecting(outputs)
+            if !outputs.isEmpty {
+                NSWorkspace.shared.activateFileViewerSelecting(outputs)
+            }
         }
         persistHistory()
         if canProtect { fingerprintOutputs(jobId: jobId, paths: outputs.map(\.path)) }
-        completions.removeValue(forKey: jobId)?(jobs[index])
+        // Start the next worker before an optional completion alert is shown.
         drainQueue()
+        completions.removeValue(forKey: jobId)?(jobs[index])
     }
 
     private func fingerprintOutputs(jobId: UUID, paths: [String]) {
