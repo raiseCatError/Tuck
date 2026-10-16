@@ -4,7 +4,7 @@ import AppKit
 @MainActor
 final class JobManager: ObservableObject {
     typealias Reporter = @Sendable (Double, String) -> Void
-    typealias Executor = @Sendable (CancellationFlag, @escaping Reporter) async throws -> [URL]
+    typealias Executor = @Sendable (CancellationFlag, @escaping Reporter) async throws -> JobOutcome
     typealias Completion = @MainActor (JobRecord) -> Void
 
     static let shared = JobManager()
@@ -115,16 +115,16 @@ final class JobManager: ObservableObject {
 
             Task.detached(priority: .userInitiated) { [weak self] in
                 do {
-                    let files = try await executor(token, { progress, detail in
+                    let result = try await executor(token, { progress, detail in
                         Task { @MainActor in
                             self?.updateProgress(jobId: jobId, fraction: progress, detail: detail)
                         }
                     })
-                    await self?.finishJob(jobId: jobId, outputs: files, error: nil,
+                    await self?.finishJob(jobId: jobId, outcome: result, error: nil,
                                           wasCancelled: token.isCancelled)
                 } catch {
                     let cancelled = token.isCancelled || error is CancellationError
-                    await self?.finishJob(jobId: jobId, outputs: [], error: cancelled ? nil : error.localizedDescription,
+                    await self?.finishJob(jobId: jobId, outcome: JobOutcome(), error: cancelled ? nil : error.localizedDescription,
                                           wasCancelled: cancelled)
                 }
             }
@@ -138,7 +138,8 @@ final class JobManager: ObservableObject {
         jobs[index].progressDetail = detail
     }
 
-    private func finishJob(jobId: UUID, outputs: [URL], error: String?, wasCancelled: Bool) {
+    private func finishJob(jobId: UUID, outcome: JobOutcome, error: String?, wasCancelled: Bool) {
+        let outputs = outcome.outputs
         guard let index = jobs.firstIndex(where: { $0.id == jobId }) else {
             activeJobIDs.remove(jobId)
             drainQueue()
@@ -146,6 +147,18 @@ final class JobManager: ObservableObject {
         }
         jobs[index].finishedAt = Date()
         jobs[index].outputs = outputs.map(\.path)
+        jobs[index].failures = outcome.failures.isEmpty ? nil : outcome.failures
+        let failedByPath = Dictionary(outcome.failures.map { ($0.inputPath, $0.reason) }, uniquingKeysWith: { first, _ in first })
+        for itemIndex in jobs[index].items.indices {
+            if let reason = failedByPath[jobs[index].items[itemIndex].inputPath] {
+                jobs[index].items[itemIndex].status = .failed
+                jobs[index].items[itemIndex].errorMessage = reason
+            } else if !wasCancelled && error == nil && !outputs.isEmpty {
+                jobs[index].items[itemIndex].status = .completed
+            } else if wasCancelled {
+                jobs[index].items[itemIndex].status = .cancelled
+            }
+        }
         if wasCancelled {
             jobs[index].status = .cancelled
             jobs[index].progressDetail = outputs.isEmpty
@@ -153,6 +166,10 @@ final class JobManager: ObservableObject {
         } else if let error {
             jobs[index].status = .failed
             jobs[index].progressDetail = error
+        } else if !outcome.failures.isEmpty {
+            jobs[index].status = outputs.isEmpty ? .failed : .partial
+            jobs[index].progress = 1
+            jobs[index].progressDetail = "Created \(outputs.count) output(s); \(outcome.failures.count) input(s) failed"
         } else {
             jobs[index].status = .completed
             jobs[index].progress = 1
@@ -164,7 +181,7 @@ final class JobManager: ObservableObject {
         if canProtect { undoRequested.remove(jobId) }
         cancelTokens.removeValue(forKey: jobId)
         activeJobIDs.remove(jobId)
-        if jobs[index].status == .completed {
+        if jobs[index].status == .completed || jobs[index].status == .partial {
             executors.removeValue(forKey: jobId)
             if !outputs.isEmpty {
                 NSWorkspace.shared.activateFileViewerSelecting(outputs)
@@ -226,6 +243,11 @@ final class JobManager: ObservableObject {
         jobs[index].finishedAt = nil
         jobs[index].canUndo = false
         jobs[index].outputProofs = nil
+        jobs[index].failures = nil
+        for itemIndex in jobs[index].items.indices {
+            jobs[index].items[itemIndex].status = .queued
+            jobs[index].items[itemIndex].errorMessage = nil
+        }
         cancelTokens[jobId] = CancellationFlag()
         workQueue.append(jobId)
         persistHistory()
@@ -244,7 +266,7 @@ final class JobManager: ObservableObject {
     }
 
     func clearCompleted() {
-        let removed = Set(jobs.filter { $0.status == .completed || $0.status == .cancelled }
+        let removed = Set(jobs.filter { $0.status == .completed || $0.status == .partial || $0.status == .cancelled }
             .map(\.id))
         jobs.removeAll { removed.contains($0.id) }
         for id in removed {
