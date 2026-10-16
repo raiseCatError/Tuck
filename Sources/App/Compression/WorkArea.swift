@@ -10,26 +10,27 @@ enum Spill {
     /// Free space we want before trusting a volume for scratch.
     static let preferredFreeBytes: Int64 = 2_000_000_000
 
-    private static let resolved: URL? = {
+    /// Resolve mounted volumes on each new job. Caching an external volume
+    /// path across unmounts can otherwise recreate a phantom /Volumes folder
+    /// on the internal disk when a drive is disconnected.
+    static func root() -> URL {
         let fm = FileManager.default
-        let volumes = (try? fm.contentsOfDirectory(at: URL(fileURLWithPath: "/Volumes", isDirectory: true),
-                                                   includingPropertiesForKeys: [.volumeIsReadOnlyKey, .volumeAvailableCapacityForImportantUsageKey])) ?? []
-        for volume in volumes.sorted(by: { $0.path < $1.path }) {
-            let values = try? volume.resourceValues(forKeys: [.volumeIsReadOnlyKey, .volumeAvailableCapacityForImportantUsageKey])
-            if values?.volumeIsReadOnly == true { continue }
-            if let free = values?.volumeAvailableCapacityForImportantUsage, free < preferredFreeBytes { continue }
-            let root = volume.appendingPathComponent("Tuck Work", isDirectory: true)
+        let mounted = fm.mountedVolumeURLs(
+            includingResourceValuesForKeys: [.volumeIsReadOnlyKey, .volumeAvailableCapacityForImportantUsageKey],
+            options: []) ?? []
+        for volume in mounted.filter({ $0.path.hasPrefix("/Volumes/") })
+            .sorted(by: { $0.path < $1.path }) {
+            guard let properties = try? volume.resourceValues(
+                forKeys: [.volumeIsReadOnlyKey, .volumeAvailableCapacityForImportantUsageKey]),
+                  properties.volumeIsReadOnly != true,
+                  let free = properties.volumeAvailableCapacityForImportantUsage,
+                  free >= preferredFreeBytes else { continue }
+            let working = volume.appendingPathComponent("Tuck Work", isDirectory: true)
             do {
-                try fm.createDirectory(at: root, withIntermediateDirectories: true)
-                return root
+                try fm.createDirectory(at: working, withIntermediateDirectories: true)
+                return working
             } catch { continue }
         }
-        return nil
-    }()
-
-    /// Where scratch goes: a mounted volume with space, else the system temp dir.
-    static func root() -> URL {
-        if let resolved { return resolved }
         return URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
     }
 
