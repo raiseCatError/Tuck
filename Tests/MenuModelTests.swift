@@ -15,9 +15,11 @@ struct MenuModelTests {
         }
         TuckPreferences.order = ["terminal", "compress", "openWith", "newFile"]
         let visibleInImage = TuckMenuModel.visible(in: .image).map(\.id)
-        assert(visibleInImage == ["terminal", "compress", "openWith", "imageToolkit", "metadata", "copyAs", "rename"])
+        assert(visibleInImage == ["terminal", "compress", "openWith", "imageToolkit", "metadata", "copyAs", "rename", "destinations"])
         assert(!visibleInImage.contains("newFile"))
         assert(!visibleInImage.contains("pdfToolkit"))
+        assert(TuckMenuModel.visible(in: .archive).contains(.zipInspector))
+        assert(TuckMenuModel.visible(in: .other).contains(.duplicates))
         assert(!TuckMenuModel.visible(in: .folder).contains(where: { $0.id == "compress" }))
         TuckPreferences.setEnabled("terminal", to: false)
         assert(!TuckMenuModel.visible(in: .image).contains(where: { $0.id == "terminal" }))
