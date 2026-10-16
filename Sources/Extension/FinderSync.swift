@@ -21,6 +21,7 @@ final class TuckFinderSync: FIFinderSync {
         static let pdfOCR = 406
         static let pdfExtractImages = 407
         static let pdfToImages = 408
+        static let pdfReorder = 409
 
         // Image Toolkit tags
         static let imgToJPEG = 500
@@ -253,6 +254,9 @@ final class TuckFinderSync: FIFinderSync {
             let rotateItem = menu.addItem(withTitle: "Rotate Pages", action: nil, keyEquivalent: "")
             rotateItem.submenu = rotateSubmenu
 
+            let reorder = menu.addItem(withTitle: "Reorder Pages…", action: #selector(pdfAction(_:)), keyEquivalent: "")
+            reorder.tag = Tag.pdfReorder
+
             menu.addItem(.separator())
             let ocr = menu.addItem(withTitle: "OCR (Recognize Text)…", action: #selector(pdfAction(_:)), keyEquivalent: "")
             ocr.tag = Tag.pdfOCR
@@ -416,6 +420,8 @@ final class TuckFinderSync: FIFinderSync {
             dispatch("pdfExtractImages", paths: paths)
         case Tag.pdfToImages:
             dispatch("pdfToImages", paths: paths)
+        case Tag.pdfReorder:
+            dispatch("pdfReorder", paths: paths)
         default:
             break
         }
