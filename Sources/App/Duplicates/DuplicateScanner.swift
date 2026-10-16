@@ -97,21 +97,25 @@ private final class DuplicateModel: ObservableObject {
                 let groups = try DuplicateScanner.scan(roots,
                     isCancelled: { cancellation.isCancelled },
                     progress: { [weak self] count in
-                        Task { @MainActor in self?.visited = count }
+                        Task { await self?.recordProgress(count) }
                     })
-                await MainActor.run {
-                    self?.groups = groups
-                    self?.message = groups.isEmpty ? "No exact duplicates found." :
-                        "Found \(groups.count) exact-content duplicate group(s)."
-                    self?.running = false
-                }
+                await self?.finished(groups)
             } catch {
-                await MainActor.run {
-                    self?.message = error is CancellationError ? "Scan cancelled." : error.localizedDescription
-                    self?.running = false
-                }
+                await self?.failed(error)
             }
         }
+    }
+
+    private func recordProgress(_ count: Int) { visited = count }
+    private func finished(_ result: [DuplicateGroup]) {
+        groups = result
+        message = result.isEmpty ? "No exact duplicates found." :
+            "Found \(result.count) exact-content duplicate group(s)."
+        running = false
+    }
+    private func failed(_ error: Error) {
+        message = error is CancellationError ? "Scan cancelled." : error.localizedDescription
+        running = false
     }
 }
 
