@@ -29,14 +29,20 @@ Fully quit any previously launched Tuck, relaunch `~/Applications/Tuck.app`, and
 | Already-small source | A separate lossless output copy is generated and highlighted; source unchanged |
 | Unsupported/unattainable limit | Clear explanation and no invalid/oversize output |
 | ZIP folder and mixed files | Archive Utility extracts all entries; content hashes and relative paths match originals |
-| Mixed PDF + images | New merged PDF in selected order; correct page count, visual layout, readable text where applicable |
+| Inspect ZIP | Search/sort and inspect sizes/dates; extract all or selected; repeated operations create distinct folders; malformed/encrypted/traversal/symlink archives refuse |
+| Mixed PDF + images | Input order chooser matches resulting page order; reorder pages (a complete permutation) and split/rotate without changing originals |
 | OCR scanned PDF | Searchable/selectable extracted text appears; original appearance retained |
 | Image conversion | Format signature and extension agree; color/alpha/orientation survive where supported |
-| Rename | Review screen shows old → new names; collision stops safely; rename history allows restoration |
+| Rename | Test literal find/replace, regex, prefix/suffix, numbering, extension change, swaps/cycles and collision preview; history allows safe restoration |
 | Job Manager | Queued jobs progress one at a time; cancel queued and running jobs; retry failures where appropriate |
 | Generated-file Undo | User-modified outputs must be **refused**, not trashed; unmodified generated copies may be moved to Trash |
-| Activity | Status, failure, output reveal, undo state and history after app restart are accurate |
-| Settings panes | Menu/Compression/Activity/Applications/General headings visible after resize, scroll and sidebar changes |
+| Activity | Status, partial failure, output reveal, undo and history after app restart accurate; optional Before/After image/PDF comparison reuses cached previews, source hash unchanged |
+| Find duplicates | Identical-content/different-name grouped; equal-size but different-content excluded; no symlink cycling; Trash only explicitly selected unchanged copies and always preserve a survivor |
+| Destinations | Add/remove/reorder saved folders; Copy To retains originals, Move To confirms, collisions resolve without overwrite, cross-volume verification retains source on failure |
+| Custom Actions | Only configured compatible actions appear; a trusted disposable executable receives path argv safely; Shortcuts errors/timeouts/cancel are actionable; disabling removes submenu item |
+| Recipes | Create/reorder/duplicate/edit/import/export typed image recipes, run on mixed valid/invalid inputs; final copies appear in export; intermediates cleaned; no external scratch causes safe refusal |
+| Watched Folders | Opt into one test folder and recipe, create stable image, verify exactly one queued job; pause/resume, disconnect drive, avoid export loops; rule does not run when disabled or app is quit |
+| Settings panes | Menu/Compression/Activity/Destinations/Automation/Recipes/Watched Folders/Applications/General headings visible after resize, scroll and sidebar changes |
 
 ### Isolation, correctness and failure tests
 
