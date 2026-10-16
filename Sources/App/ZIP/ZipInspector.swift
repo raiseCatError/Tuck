@@ -171,6 +171,33 @@ public enum ZipInspector {
         }
     }
 
+    /// Copy bytes into a private regular file rather than using copyItem,
+    /// which can reproduce a symbolic link instead of snapshotting its bytes.
+    /// Restrict memory to a single chunk and bound on-disk staging growth.
+    private static func makeSnapshot(from archive: URL, at snapshot: URL,
+                                     shouldCancel: @escaping @Sendable () -> Bool) throws {
+        let fm = FileManager.default
+        guard fm.createFile(atPath: snapshot.path, contents: nil,
+                            attributes: [.posixPermissions: 0o600]) else {
+            throw Invalid.malformed("Cannot create a private ZIP snapshot.")
+        }
+        let reader = try FileHandle(forReadingFrom: archive)
+        defer { try? reader.close() }
+        let writer = try FileHandle(forWritingTo: snapshot)
+        defer { try? writer.close() }
+
+        var written: UInt64 = 0
+        while let data = try reader.read(upToCount: 1_048_576), !data.isEmpty {
+            if shouldCancel() { throw CancellationError() }
+            guard UInt64(data.count) <= maxExpandedBytes - written else {
+                throw Invalid.malformed("ZIP archive exceeds the 2 GB snapshot safety limit.")
+            }
+            try writer.write(contentsOf: data)
+            written += UInt64(data.count)
+        }
+        if shouldCancel() { throw CancellationError() }
+    }
+
     /// Extract only preflight-validated entries into a fresh private staging
     /// directory beside the destination. The destination folder is published
     /// only after validation of the extracted file tree.
@@ -189,8 +216,7 @@ public enum ZipInspector {
         // another process may replace that archive between inspection and
         // extraction. Only an isolated private snapshot is handed to unzip.
         let snapshot = stage.appendingPathComponent("validated.zip")
-        try fm.copyItem(at: archive, to: snapshot)
-        guard !shouldCancel() else { throw CancellationError() }
+        try makeSnapshot(from: archive, at: snapshot, shouldCancel: shouldCancel)
         let listing = try inspect(snapshot)
         if let selected, !selected.isSubset(of: Set(listing.map(\.name))) {
             throw Invalid.malformed("The requested ZIP selection is no longer valid.")
