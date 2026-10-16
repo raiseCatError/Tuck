@@ -83,9 +83,11 @@ struct RecipeSettingsView: View {
                                     Text(step.title)
                                     Spacer()
                                     Button {
+                                        guard recipes[index].steps.count > 1 else { return }
                                         recipes[index].steps.removeAll { $0.id == step.id }
                                         save()
                                     } label: { Image(systemName: "minus.circle") }
+                                        .disabled(recipes[index].steps.count <= 1)
                                         .accessibilityLabel("Remove \(step.title)")
                                 }
                             }
