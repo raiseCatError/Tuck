@@ -29,6 +29,8 @@ struct SettingsView: View {
     @State private var previewContext: TuckContext = .image
     @State private var lastPreview = "Choose an action to test the menu. Nothing will change on disk."
     @State private var sizeError = false
+    @State private var activityError = ""
+    @State private var showActivityError = false
 
     var body: some View {
         NavigationSplitView {
@@ -52,6 +54,11 @@ struct SettingsView: View {
             }
         }
         .frame(minWidth: 820, minHeight: 565)
+        .alert("Tuck could not complete the action", isPresented: $showActivityError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(activityError)
+        }
     }
 
     private var menuPane: some View {
@@ -227,27 +234,23 @@ struct SettingsView: View {
 
     private var activityPane: some View {
         VStack(alignment: .leading, spacing: 20) {
-            header("Activity & History", subtitle: "Inspect active background operations, view completed jobs, and safely undo supported actions.")
+            header("Activity & History", subtitle: "Queued work, progress, results, and verified recovery actions.")
             HStack {
-                Text("\(jobManager.jobs.count) recorded operation(s)").font(.subheadline).foregroundStyle(.secondary)
+                Text("\(jobManager.jobs.count) recorded operation(s)")
+                    .font(.subheadline).foregroundStyle(.secondary)
                 Spacer()
+                Button(jobManager.isQueuePaused ? "Resume Queue" : "Pause Queue") {
+                    jobManager.setQueuePaused(!jobManager.isQueuePaused)
+                }
                 if !jobManager.jobs.isEmpty {
-                    Button("Clear Completed") {
-                        jobManager.clearCompleted()
-                    }
+                    Button("Clear Completed") { jobManager.clearCompleted() }
                 }
             }
 
             if jobManager.jobs.isEmpty {
                 GroupBox {
-                    HStack {
-                        Spacer()
-                        Text("No recent activity. Actions triggered from Finder will appear here.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .padding(24)
-                        Spacer()
-                    }
+                    Text("No recent activity. Finder operations will appear here.")
+                        .font(.callout).foregroundStyle(.secondary).padding(24)
                 }
             } else {
                 ForEach(jobManager.jobs) { job in
@@ -257,9 +260,7 @@ struct SettingsView: View {
                                 Text(job.title).font(.headline)
                                 Spacer()
                                 Text(job.status.rawValue.capitalized)
-                                    .font(.caption)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
+                                    .font(.caption).padding(.horizontal, 6).padding(.vertical, 2)
                                     .background(statusColor(job.status).opacity(0.15))
                                     .foregroundStyle(statusColor(job.status))
                                     .cornerRadius(4)
@@ -268,26 +269,47 @@ struct SettingsView: View {
                                 ProgressView(value: job.progress)
                                     .progressViewStyle(.linear)
                             }
+                            Text(job.progressDetail)
+                                .font(.caption).foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                            if job.status == .completed && job.canUndo == false
+                                && !job.outputs.isEmpty && !job.isUndone {
+                                Text("Undo unavailable until the output is verified, or for unsupported files.")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
                             HStack {
-                                Text(job.progressDetail).font(.caption).foregroundStyle(.secondary)
                                 Spacer()
                                 if job.status == .running || job.status == .queued {
                                     Button("Cancel") { jobManager.cancel(jobId: job.id) }
-                                        .buttonStyle(.bordered)
-                                        .controlSize(.small)
-                                } else if job.canUndo && !job.isUndone {
-                                    Button("Undo") {
-                                        try? jobManager.undo(jobId: job.id)
+                                        .buttonStyle(.bordered).controlSize(.small)
+                                }
+                                if job.status == .failed || job.status == .cancelled {
+                                    Button("Retry") {
+                                        if !jobManager.retry(jobId: job.id) {
+                                            activityError = "This job cannot be retried automatically. Re-run the action from Finder; no originals were removed."
+                                            showActivityError = true
+                                        }
                                     }
-                                    .buttonStyle(.borderedProminent)
-                                    .controlSize(.small)
-                                } else if !job.outputs.isEmpty {
+                                    .buttonStyle(.bordered).controlSize(.small)
+                                }
+                                if job.canUndo && !job.isUndone {
+                                    Button(job.operation == "advancedRename" ? "Restore Names" : "Move Generated Copies to Trash") {
+                                        Task {
+                                            do { try await jobManager.undo(jobId: job.id) }
+                                            catch {
+                                                activityError = error.localizedDescription
+                                                showActivityError = true
+                                            }
+                                        }
+                                    }
+                                    .buttonStyle(.bordered).controlSize(.small)
+                                }
+                                if !job.outputs.isEmpty && !job.isUndone {
                                     Button("Reveal Output") {
-                                        let urls = job.outputs.map { URL(fileURLWithPath: $0) }
-                                        NSWorkspace.shared.activateFileViewerSelecting(urls)
+                                        NSWorkspace.shared.activateFileViewerSelecting(
+                                            job.outputs.map { URL(fileURLWithPath: $0) })
                                     }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
+                                    .buttonStyle(.bordered).controlSize(.small)
                                 }
                             }
                         }.padding(8)
