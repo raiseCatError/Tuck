@@ -369,11 +369,16 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         }
         let selectedRange = rangeDesc
         queueOperation(title: "Split PDF", operation: "pdfSplit", paths: [first]) { token, progress in
-            let outputs = try PDFToolkit.split(url: url, rangeDescription: selectedRange,
-                                               progress: progress, shouldCancel: { token.isCancelled })
-            if token.isCancelled && outputs.isEmpty { throw CancellationError() }
-            guard !outputs.isEmpty else { throw UndoError.unsafe("No PDF pages were extracted.") }
-            return JobOutcome(outputs: outputs)
+            do {
+                let outputs = try PDFToolkit.split(url: url, rangeDescription: selectedRange,
+                                                   progress: progress, shouldCancel: { token.isCancelled })
+                if token.isCancelled && outputs.isEmpty { throw CancellationError() }
+                guard !outputs.isEmpty else { throw UndoError.unsafe("No PDF pages were extracted.") }
+                return JobOutcome(outputs: outputs)
+            } catch let partial as PartialPDFSplitError {
+                return JobOutcome(outputs: partial.outputs,
+                                  failures: [JobFailure(inputPath: first, reason: partial.failureDescription)])
+            }
         }
     }
 
