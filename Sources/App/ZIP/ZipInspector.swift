@@ -137,7 +137,9 @@ public enum ZipInspector {
         guard !name.hasPrefix("/"), !name.hasPrefix("\\"),
               !name.contains("\\"), !name.contains("\0"), !name.contains(":"),
               !name.contains("//"), name.utf8.count <= 1024,
-              !name.split(separator: "/").contains(where: { $0 == ".." || $0 == "." }),
+              !name.split(separator: "/").contains(where: {
+                  $0 == ".." || $0 == "." || $0.hasPrefix("-")
+              }),
               !name.hasPrefix("~") else {
             throw Invalid.malformed("ZIP includes an unsafe path and cannot be extracted.")
         }
