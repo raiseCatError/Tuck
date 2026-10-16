@@ -4,6 +4,7 @@ import AppKit
 private enum SettingsPane: String, CaseIterable, Identifiable {
     case menu = "Menu"
     case compression = "Compression"
+    case activity = "Activity"
     case applications = "Applications"
     case general = "General"
     var id: Self { self }
@@ -11,6 +12,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .menu: "list.bullet"
         case .compression: "arrow.down.right.and.arrow.up.left"
+        case .activity: "clock.arrow.circlepath"
         case .applications: "terminal"
         case .general: "gearshape"
         }
@@ -40,6 +42,7 @@ struct SettingsView: View {
                     switch pane ?? .menu {
                     case .menu: menuPane
                     case .compression: compressionPane
+                    case .activity: activityPane
                     case .applications: applicationsPane
                     case .general: generalPane
                     }
@@ -218,6 +221,90 @@ struct SettingsView: View {
         guard !sizeError else { return }
         TuckPreferences.sizes = numbers
         sizesText = TuckPreferences.sizes.map(String.init).joined(separator: ", ")
+    }
+
+    @ObservedObject private var jobManager = JobManager.shared
+
+    private var activityPane: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            header("Activity & History", subtitle: "Inspect active background operations, view completed jobs, and safely undo supported actions.")
+            HStack {
+                Text("\(jobManager.jobs.count) recorded operation(s)").font(.subheadline).foregroundStyle(.secondary)
+                Spacer()
+                if !jobManager.jobs.isEmpty {
+                    Button("Clear Completed") {
+                        jobManager.clearCompleted()
+                    }
+                }
+            }
+
+            if jobManager.jobs.isEmpty {
+                GroupBox {
+                    HStack {
+                        Spacer()
+                        Text("No recent activity. Actions triggered from Finder will appear here.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .padding(24)
+                        Spacer()
+                    }
+                }
+            } else {
+                ForEach(jobManager.jobs) { job in
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text(job.title).font(.headline)
+                                Spacer()
+                                Text(job.status.rawValue.capitalized)
+                                    .font(.caption)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(statusColor(job.status).opacity(0.15))
+                                    .foregroundStyle(statusColor(job.status))
+                                    .cornerRadius(4)
+                            }
+                            if job.status == .running {
+                                ProgressView(value: job.progress)
+                                    .progressViewStyle(.linear)
+                            }
+                            HStack {
+                                Text(job.progressDetail).font(.caption).foregroundStyle(.secondary)
+                                Spacer()
+                                if job.status == .running || job.status == .queued {
+                                    Button("Cancel") { jobManager.cancel(jobId: job.id) }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                } else if job.canUndo && !job.isUndone {
+                                    Button("Undo") {
+                                        try? jobManager.undo(jobId: job.id)
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                                } else if !job.outputs.isEmpty {
+                                    Button("Reveal Output") {
+                                        let urls = job.outputs.map { URL(fileURLWithPath: $0) }
+                                        NSWorkspace.shared.activateFileViewerSelecting(urls)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                }
+                            }
+                        }.padding(8)
+                    }
+                }
+            }
+        }
+    }
+
+    private func statusColor(_ status: JobStatus) -> Color {
+        switch status {
+        case .queued: return .orange
+        case .running: return .blue
+        case .completed: return .green
+        case .failed: return .red
+        case .cancelled: return .secondary
+        }
     }
 
     private var applicationsPane: some View {

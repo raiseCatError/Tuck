@@ -236,6 +236,22 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             report("Nothing could be compressed.")
             return
         }
+        let items = outcome.results.map {
+            JobItemStatus(inputPath: $0.source.path, outputPath: $0.output?.path, status: .completed)
+        }
+        let record = JobRecord(
+            title: "Compress to < \(target.description)",
+            operation: operation,
+            finishedAt: Date(),
+            status: outputs.isEmpty ? .failed : .completed,
+            progress: 1.0,
+            progressDetail: outputs.isEmpty ? "Failed" : "Compressed \(outputs.count) file(s)",
+            items: items,
+            outputs: outputs.map(\.path),
+            canUndo: !outputs.isEmpty
+        )
+        JobManager.shared.recordCompletedJob(record)
+
         TuckLog.compressionLogger.info("helper.result op=\(operation, privacy: .public) outputs=\(outputs.count) failures=\(outcome.failures.count)")
         report(lines.joined(separator: "\n\n"), title: outputs.isEmpty ? "Compression failed" : "Compression finished")
     }
@@ -255,6 +271,19 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
                 }, shouldCancel: { cancelled.isCancelled })
                 await MainActor.run {
                     progress.dismiss()
+                    let record = JobRecord(
+                        title: "Create ZIP archive",
+                        operation: "zip",
+                        finishedAt: Date(),
+                        status: .completed,
+                        progress: 1.0,
+                        progressDetail: "Created \(result.file.lastPathComponent)",
+                        items: paths.map { JobItemStatus(inputPath: $0) },
+                        outputs: [result.file.path],
+                        canUndo: true
+                    )
+                    JobManager.shared.recordCompletedJob(record)
+
                     NSWorkspace.shared.activateFileViewerSelecting([result.file])
                     let megabytes = String(format: "%.2f", Double(ImageFacts.byteSize(result.file)) / 1_000_000)
                     self?.report("\(result.file.lastPathComponent)\n\(megabytes) MB using \(result.strategy).", title: "Archive ready")
@@ -379,6 +408,19 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
 
                 await MainActor.run {
                     progress.dismiss()
+                    let record = JobRecord(
+                        title: "Merge \(urls.count) item(s) to PDF",
+                        operation: "pdfMerge",
+                        finishedAt: Date(),
+                        status: .completed,
+                        progress: 1.0,
+                        progressDetail: "Created \(merged.lastPathComponent)",
+                        items: paths.map { JobItemStatus(inputPath: $0) },
+                        outputs: [merged.path],
+                        canUndo: true
+                    )
+                    JobManager.shared.recordCompletedJob(record)
+
                     NSWorkspace.shared.activateFileViewerSelecting([merged])
                     self?.report("Saved merged document as:\n\(merged.lastPathComponent)", title: "PDF Merged")
                 }
@@ -422,7 +464,21 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
 
                 await MainActor.run {
                     progress.dismiss()
-                    if !outputs.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(outputs) }
+                    if !outputs.isEmpty {
+                        let record = JobRecord(
+                            title: "Split PDF (\(outputs.count) pages/parts)",
+                            operation: "pdfSplit",
+                            finishedAt: Date(),
+                            status: .completed,
+                            progress: 1.0,
+                            progressDetail: "Created \(outputs.count) PDF(s)",
+                            items: [JobItemStatus(inputPath: first)],
+                            outputs: outputs.map(\.path),
+                            canUndo: true
+                        )
+                        JobManager.shared.recordCompletedJob(record)
+                        NSWorkspace.shared.activateFileViewerSelecting(outputs)
+                    }
                     self?.report("Created \(outputs.count) split PDF(s).", title: "PDF Split Complete")
                 }
             } catch {
@@ -443,6 +499,18 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             }
         }
         if !outputs.isEmpty {
+            let record = JobRecord(
+                title: "Rotate \(outputs.count) PDF(s) \(degrees)°",
+                operation: "pdfRotate",
+                finishedAt: Date(),
+                status: .completed,
+                progress: 1.0,
+                progressDetail: "Rotated \(outputs.count) file(s)",
+                items: paths.map { JobItemStatus(inputPath: $0) },
+                outputs: outputs.map(\.path),
+                canUndo: true
+            )
+            JobManager.shared.recordCompletedJob(record)
             NSWorkspace.shared.activateFileViewerSelecting(outputs)
             report("Rotated \(outputs.count) document(s) by \(degrees)°.", title: "PDF Rotated")
         }
@@ -468,7 +536,21 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             }
             await MainActor.run {
                 progress.dismiss()
-                if !outputs.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(outputs) }
+                if !outputs.isEmpty {
+                    let record = JobRecord(
+                        title: "OCR \(outputs.count) PDF(s)",
+                        operation: "pdfOCR",
+                        finishedAt: Date(),
+                        status: .completed,
+                        progress: 1.0,
+                        progressDetail: "Created \(outputs.count) searchable PDF(s)",
+                        items: paths.map { JobItemStatus(inputPath: $0) },
+                        outputs: outputs.map(\.path),
+                        canUndo: true
+                    )
+                    JobManager.shared.recordCompletedJob(record)
+                    NSWorkspace.shared.activateFileViewerSelecting(outputs)
+                }
                 self?.report("Generated \(outputs.count) searchable OCR PDF(s).", title: "OCR Complete")
             }
         }
@@ -483,6 +565,18 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             }
         }
         if !totalImages.isEmpty {
+            let record = JobRecord(
+                title: "Extract Images (\(totalImages.count) assets)",
+                operation: "pdfExtractImages",
+                finishedAt: Date(),
+                status: .completed,
+                progress: 1.0,
+                progressDetail: "Extracted \(totalImages.count) asset(s)",
+                items: paths.map { JobItemStatus(inputPath: $0) },
+                outputs: totalImages.map(\.path),
+                canUndo: true
+            )
+            JobManager.shared.recordCompletedJob(record)
             NSWorkspace.shared.activateFileViewerSelecting(totalImages)
             report("Extracted \(totalImages.count) image assets.", title: "Images Extracted")
         } else {
@@ -499,6 +593,18 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             }
         }
         if !totalImages.isEmpty {
+            let record = JobRecord(
+                title: "Render Pages to Images (\(totalImages.count) pages)",
+                operation: "pdfToImages",
+                finishedAt: Date(),
+                status: .completed,
+                progress: 1.0,
+                progressDetail: "Rendered \(totalImages.count) page(s)",
+                items: paths.map { JobItemStatus(inputPath: $0) },
+                outputs: totalImages.map(\.path),
+                canUndo: true
+            )
+            JobManager.shared.recordCompletedJob(record)
             NSWorkspace.shared.activateFileViewerSelecting(totalImages)
             report("Rendered \(totalImages.count) page image(s).", title: "Pages Converted")
         }
@@ -521,6 +627,18 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         }
 
         if !outputs.isEmpty {
+            let record = JobRecord(
+                title: "Convert to \(targetFormat.uppercased())",
+                operation: "imageConvert",
+                finishedAt: Date(),
+                status: .completed,
+                progress: 1.0,
+                progressDetail: "Converted \(outputs.count) file(s)",
+                items: paths.map { JobItemStatus(inputPath: $0) },
+                outputs: outputs.map(\.path),
+                canUndo: true
+            )
+            JobManager.shared.recordCompletedJob(record)
             NSWorkspace.shared.activateFileViewerSelecting(outputs)
         }
         if !failures.isEmpty {
@@ -554,6 +672,18 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             }
         }
         if !outputs.isEmpty {
+            let record = JobRecord(
+                title: "Resize \(outputs.count) image(s)",
+                operation: "imageResize",
+                finishedAt: Date(),
+                status: .completed,
+                progress: 1.0,
+                progressDetail: "Resized \(outputs.count) image(s)",
+                items: paths.map { JobItemStatus(inputPath: $0) },
+                outputs: outputs.map(\.path),
+                canUndo: true
+            )
+            JobManager.shared.recordCompletedJob(record)
             NSWorkspace.shared.activateFileViewerSelecting(outputs)
             report("Resized \(outputs.count) image(s).", title: "Resize Complete")
         }
@@ -576,6 +706,18 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             }
         }
         if !outputs.isEmpty {
+            let record = JobRecord(
+                title: "Strip Metadata (\(outputs.count) files)",
+                operation: "metaStrip",
+                finishedAt: Date(),
+                status: .completed,
+                progress: 1.0,
+                progressDetail: "Stripped \(outputs.count) file(s)",
+                items: paths.map { JobItemStatus(inputPath: $0) },
+                outputs: outputs.map(\.path),
+                canUndo: true
+            )
+            JobManager.shared.recordCompletedJob(record)
             NSWorkspace.shared.activateFileViewerSelecting(outputs)
             report("Created \(outputs.count) stripped file(s) with clean metadata.", title: "Metadata Stripped")
         }
@@ -622,8 +764,22 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
 
         do {
             let renamed = try AdvancedRenameToolkit.execute(plan: plan)
+            let items = plan.map { JobItemStatus(inputPath: $0.originalURL.path, outputPath: $0.proposedURL.path, status: .completed) }
+            let record = JobRecord(
+                title: "Rename \(renamed.count) file(s)",
+                operation: "advancedRename",
+                finishedAt: Date(),
+                status: .completed,
+                progress: 1.0,
+                progressDetail: "Completed",
+                items: items,
+                outputs: renamed.map(\.path),
+                canUndo: true
+            )
+            JobManager.shared.recordCompletedJob(record)
+
             NSWorkspace.shared.activateFileViewerSelecting(renamed)
-            report("Successfully renamed \(renamed.count) file(s).", title: "Rename Complete")
+            report("Successfully renamed \(renamed.count) file(s). You can undo this action from Settings > Activity.", title: "Rename Complete")
         } catch {
             report("Rename failed: \(error.localizedDescription)", title: "Rename Failed")
         }

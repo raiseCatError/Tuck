@@ -454,25 +454,29 @@ final class TuckFinderSync: FIFinderSync {
 
     private func dispatch(_ operation: String, paths: [String], argument: String? = nil) {
         if paths.count > 256 {
-            let alert = NSAlert()
-            alert.messageText = "Selection Exceeds Limit"
-            alert.informativeText = "Tuck supports batch operations on up to 256 files at once. You have selected \(paths.count) items. Please reduce your selection to 256 files or fewer."
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "OK")
-            NSApp.activate(ignoringOtherApps: true)
-            alert.runModal()
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "Selection Exceeds Limit"
+                alert.informativeText = "Tuck supports batch operations on up to 256 files at once. You have selected \(paths.count) items. Please reduce your selection to 256 files or fewer."
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                NSApp.activate(ignoringOtherApps: true)
+                alert.runModal()
+            }
             TuckLog.extensionLogger.error("ipc.dispatch-aborted op=\(operation, privacy: .public) reason=exceeds-max-paths count=\(paths.count)")
             return
         }
 
         guard let url = TuckRequest(operation: operation, paths: paths, argument: argument).signedURL() else {
-            let alert = NSAlert()
-            alert.messageText = "Request Too Large"
-            alert.informativeText = "The total file path payload exceeded the maximum buffer size. Try selecting fewer files or files with shorter paths."
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "OK")
-            NSApp.activate(ignoringOtherApps: true)
-            alert.runModal()
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "Request Too Large"
+                alert.informativeText = "The total file path payload exceeded the maximum buffer size. Try selecting fewer files or files with shorter paths."
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                NSApp.activate(ignoringOtherApps: true)
+                alert.runModal()
+            }
             TuckLog.extensionLogger.error("ipc.dispatch-failed op=\(operation, privacy: .public) paths=\(paths.count)")
             return
         }
