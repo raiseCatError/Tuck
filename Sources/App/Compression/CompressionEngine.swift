@@ -20,7 +20,7 @@ enum CompressionEngine {
                          progress: @Sendable @escaping (CompressionProgress) -> Void,
                          shouldCancel: @Sendable @escaping () -> Bool) -> Outcome {
         var outcome = Outcome()
-        let sources = paths.prefix(16).map { URL(fileURLWithPath: $0) }
+        let sources = paths.map { URL(fileURLWithPath: $0) }
         let total = max(1, sources.count)
         for (index, source) in sources.enumerated() {
             if shouldCancel() {
