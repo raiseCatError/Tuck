@@ -171,6 +171,8 @@ struct SettingsView: View {
             }
         case .rename:
             Button(action.title) { lastPreview = "Advanced Rename → Batch Pattern Rename" }
+        case .duplicates:
+            Button(action.title) { lastPreview = "Find exact duplicate content in selected folders" }
         }
     }
 
