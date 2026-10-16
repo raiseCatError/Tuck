@@ -61,7 +61,7 @@ struct IPCTests {
         assert(failure(of: signed(staleBy: 1, paths: ["/tmp"], argument: String(repeating: "x", count: 600))) == .badArgument)
 
         // The signer caps what it will send.
-        assert(TuckRequest(operation: "zip", paths: Array(repeating: "/tmp", count: 300)).paths.count == 256)
+        assert(TuckRequest(operation: "zip", paths: Array(repeating: "/tmp", count: 300)).signedURL() == nil)
 
         print("IPCTests passed")
     }
