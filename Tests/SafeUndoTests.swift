@@ -45,7 +45,8 @@ struct SafeUndoTests {
         try ProtectedUndo.execute(renameJob)
         assert(fm.fileExists(atPath: original.path))
         assert(!fm.fileExists(atPath: renamed.path))
-        assert(String(data: try Data(contentsOf: original), encoding: .utf8) == "keep me")
+        let restored = try String(contentsOf: original, encoding: .utf8)
+        assert(restored == "keep me")
 
         // Someone created a new original name: rollback must refuse to overwrite it.
         try fm.moveItem(at: original, to: renamed)
@@ -56,7 +57,8 @@ struct SafeUndoTests {
             outputs: [renamed.path], canUndo: true,
             outputProofs: [try OutputIdentity.capture(renamed)])
         assert(rejects { try ProtectedUndo.execute(collisionJob) })
-        assert(String(data: try Data(contentsOf: original), encoding: .utf8) == "do not touch")
+        let untouched = try String(contentsOf: original, encoding: .utf8)
+        assert(untouched == "do not touch")
         print("SafeUndoTests passed")
     }
 
