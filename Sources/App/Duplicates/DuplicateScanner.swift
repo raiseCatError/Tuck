@@ -241,10 +241,13 @@ private struct DuplicatesView: View {
             }
         }
         let proofs = groups.flatMap(\.members).filter { marked.contains($0.path) }
+        let survivors = groups.flatMap(\.members).filter { !marked.contains($0.path) }
         guard !proofs.isEmpty else { return }
-        // Full-file identity hashing and Trash I/O run away from the UI actor.
+        // Verify at least one untouched surviving copy in each group; a file
+        // deleted or changed since scanning must not be counted as a backup.
+        // Full-file hashing and Trash I/O run off the main actor.
         let removed = try await Task.detached(priority: .userInitiated) {
-            for proof in proofs { try proof.verifyUnchanged() }
+            for proof in proofs + survivors { try proof.verifyUnchanged() }
             var moved: [String] = []
             for proof in proofs {
                 do {
