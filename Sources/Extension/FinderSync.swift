@@ -101,6 +101,11 @@ final class TuckFinderSync: FIFinderSync {
 
     override func menu(for kind: FIMenuKind) -> NSMenu? {
         guard kind == .contextualMenuForContainer || kind == .contextualMenuForItems else { return nil }
+        let started = ProcessInfo.processInfo.systemUptime
+        defer {
+            let elapsed = Int((ProcessInfo.processInfo.systemUptime - started) * 1000)
+            TuckLog.extensionLogger.info("extension.menu-duration ms=\(elapsed)")
+        }
         TuckPreferences.store.synchronize()
         let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first?.standardizedFileURL
         let selection = selected
