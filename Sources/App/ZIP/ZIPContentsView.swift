@@ -18,7 +18,7 @@ enum ZIPWindow {
         windows[id] = win
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification,
                                                object: win, queue: .main) { _ in
-            MainActor.assumeIsolated { windows.removeValue(forKey: id) }
+            MainActor.assumeIsolated { _ = windows.removeValue(forKey: id) }
         }
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
