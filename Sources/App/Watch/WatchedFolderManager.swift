@@ -9,7 +9,7 @@ import Darwin
 final class WatchedFolderManager {
     static let shared = WatchedFolderManager()
 
-    struct Stamp: Equatable {
+    struct Stamp: Hashable {
         let device: UInt64
         let inode: UInt64
         let bytes: UInt64
@@ -26,13 +26,17 @@ final class WatchedFolderManager {
     /// enough to be complete. Changes still arriving remain pending.
     static func decide(known: [String: Stamp], first: [String: Stamp],
                        second: [String: Stamp], now: Date) -> Decision {
+        let observedBefore = Set(known.values)
         var acknowledged = known.filter { second[$0.key] != nil }
         var ready: [String] = []
         for (path, stamp) in first where known[path] != stamp {
             guard let later = second[path], later == stamp, later.bytes > 0,
                   now.timeIntervalSince(later.modified) >= 1 else { continue }
             acknowledged[path] = later
-            ready.append(path)
+            // A rename of a previously seen file keeps its device/inode,
+            // bytes and modification date. Acknowledge its new path without
+            // treating the rename as another newly arrived file.
+            if !observedBefore.contains(later) { ready.append(path) }
         }
         return Decision(ready: ready.sorted(), known: acknowledged,
                         retry: second.contains { acknowledged[$0.key] != $0.value })
