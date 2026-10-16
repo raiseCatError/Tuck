@@ -12,7 +12,7 @@ cd /Volumes/T7Projects/Projects/tuck
 ./scripts/test-model.sh
 ./scripts/install.sh
 ./scripts/verify-ipc.sh
-./scripts/verify-finder-environment.sh
+bash ./scripts/verify-finder-environment.sh
 ```
 
 Fully quit any previously launched Tuck, relaunch `~/Applications/Tuck.app`, and enable Tuck under **System Settings → General → Login Items & Extensions → Finder Extensions**. Restart Finder only if needed after changing extension registration.
