@@ -23,6 +23,7 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let created = TuckPreferences.prepareKey()
+        WatchedFolderManager.shared.reload()
         TuckLog.helperLogger.info("helper.launched pid=\(ProcessInfo.processInfo.processIdentifier) keyCreated=\(created) keyPresent=\(TuckPreferences.sharedKey != nil) settingsArg=\(CommandLine.arguments.contains("--settings"))")
         if CommandLine.arguments.contains("--settings") { showSettings(); return }
         // A Finder-triggered URL may arrive after didFinishLaunching. Never show the
