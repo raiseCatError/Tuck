@@ -17,6 +17,7 @@ struct ToolkitTests {
         testPDFRenderAndImages(in: tmpDir)
         testPDFOCR(in: tmpDir)
         testImageConvertAndResize(in: tmpDir)
+        testAnimatedImageRefusal(in: tmpDir)
         testMetadataInspectAndStrip(in: tmpDir)
         testCopyAsAndRename(in: tmpDir)
 
@@ -143,6 +144,35 @@ struct ToolkitTests {
         let wEdge = propsEdge[kCGImagePropertyPixelWidth] as! Int
         assert(wEdge == 100, "Expected longest edge 100, got \(wEdge)")
         print("   ✓ Image Conversion & Resize verified")
+    }
+
+    static func testAnimatedImageRefusal(in dir: URL) {
+        print("-> Testing animated image safety")
+        let png = createTestImage(in: dir, name: "animation-frame.png", width: 16, height: 16,
+                                  color: (1, 0, 0))
+        guard let source = CGImageSourceCreateWithURL(png as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            fatalError("Could not build animated fixture")
+        }
+        let gif = dir.appendingPathComponent("animated.gif")
+        guard let destination = CGImageDestinationCreateWithURL(
+            gif as CFURL, "com.compuserve.gif" as CFString, 2, nil) else {
+            fatalError("Could not create GIF fixture")
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        CGImageDestinationAddImage(destination, image, nil)
+        assert(CGImageDestinationFinalize(destination))
+        assert(CGImageSourceGetCount(CGImageSourceCreateWithURL(gif as CFURL, nil)!) == 2)
+        var rejectedConvert = false
+        do { _ = try ImageToolkit.convert(url: gif, targetFormat: "png") }
+        catch ImageConvertError.unsupportedFormat { rejectedConvert = true }
+        catch { }
+        var rejectedResize = false
+        do { _ = try ImageToolkit.resize(url: gif, mode: .percentage(50)) }
+        catch ImageConvertError.unsupportedFormat { rejectedResize = true }
+        catch { }
+        assert(rejectedConvert && rejectedResize, "Animated images must never silently lose frames.")
+        print("   ✓ Animated image refusal verified")
     }
 
     static func testMetadataInspectAndStrip(in dir: URL) {
