@@ -58,18 +58,22 @@ final class WatchedFolderManager {
                 Task { @MainActor in self?.scheduleScan(id: rule.id) }
             }
             source.setCancelHandler { close(handle) }
+            guard let baseline = snapshot(folder) else {
+                source.cancel()
+                continue
+            }
             watches[rule.id] = Watch(rule: rule, folder: folder, source: source,
-                                     known: snapshot(folder))
+                                     known: baseline)
             source.resume()
         }
     }
 
-    private func snapshot(_ folder: URL) -> [String: Stamp] {
+    private func snapshot(_ folder: URL) -> [String: Stamp]? {
         let fm = FileManager.default
         guard let urls = try? fm.contentsOfDirectory(at: folder,
             includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey,
                                          .isUbiquitousItemKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles]), urls.count <= 10_000 else { return [:] }
+            options: [.skipsHiddenFiles]), urls.count <= 10_000 else { return nil }
         var result: [String: Stamp] = [:]
         for url in urls where RecipeRunner.allowedImageFormats.contains(url.pathExtension.lowercased()) {
             guard let v = try? url.resourceValues(
@@ -98,7 +102,7 @@ final class WatchedFolderManager {
     private func checkChanges(id: UUID) async {
         defer { checks.remove(id) }
         guard let watch = watches[id], !WatchRulePreferences.paused else { return }
-        let first = snapshot(watch.folder)
+        guard let first = snapshot(watch.folder) else { return }
         let new = first.filter { watch.known[$0.key] != $0.value }
         guard !new.isEmpty else {
             watches[id]?.known = first
@@ -108,7 +112,7 @@ final class WatchedFolderManager {
         // recipe begins. Never process a partial/in-progress download.
         try? await Task.sleep(nanoseconds: 1_000_000_000)
         guard let live = watches[id], live.folder == watch.folder else { return }
-        let second = snapshot(watch.folder)
+        guard let second = snapshot(watch.folder) else { return }
         let recipe = RecipePreferences.all.first { $0.id == watch.rule.recipeID }
         if let recipe {
             for (path, stamp) in new where second[path] == stamp {
@@ -125,7 +129,10 @@ final class WatchedFolderManager {
         // Files still arriving may not emit another directory event when only
         // bytes change; check one more time after a slow writer is observed.
         if new.contains(where: { second[$0.key] != $0.value }) {
-            scheduleScan(id: id)
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                self?.scheduleScan(id: id)
+            }
         }
     }
 }
