@@ -35,6 +35,10 @@ public enum ImageToolkit {
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw ImageConvertError.unreadableImage(url.lastPathComponent)
         }
+        guard CGImageSourceGetCount(source) == 1 else {
+            throw ImageConvertError.unsupportedFormat(
+                "Animated and multi-frame images cannot be processed without losing frames.")
+        }
 
         let utType: UTType
         let ext: String
@@ -128,6 +132,10 @@ public enum ImageToolkit {
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw ImageConvertError.unreadableImage(url.lastPathComponent)
         }
+        guard CGImageSourceGetCount(source) == 1 else {
+            throw ImageConvertError.unsupportedFormat(
+                "Animated and multi-frame images cannot be processed without losing frames.")
+        }
 
         if shouldCancel() { throw CancellationError() }
         let origW = image.width
@@ -178,7 +186,7 @@ public enum ImageToolkit {
         }
         if shouldCancel() { throw CancellationError() }
 
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let colorSpace = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
 
         guard let context = CGContext(data: nil, width: targetW, height: targetH,
