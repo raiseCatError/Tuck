@@ -8,6 +8,7 @@ import Vision
 public enum PDFMergeError: LocalizedError, Sendable {
     case noInputs
     case unreadableFile(String)
+    case encryptedFile(String)
     case failedToCreateDocument
     case writeFailed
 
@@ -17,6 +18,8 @@ public enum PDFMergeError: LocalizedError, Sendable {
             return "No valid PDF or image files selected to merge."
         case .unreadableFile(let path):
             return "Unable to decode or read: \(path)"
+        case .encryptedFile(let path):
+            return "PDF is password-protected or encrypted: \(path)"
         case .failedToCreateDocument:
             return "Failed to initialize target PDF document."
         case .writeFailed:
@@ -49,6 +52,9 @@ public enum PDFToolkit {
             if ext == "pdf" {
                 guard let doc = PDFDocument(url: url) else {
                     throw PDFMergeError.unreadableFile(url.lastPathComponent)
+                }
+                if doc.isEncrypted || doc.isLocked {
+                    throw PDFMergeError.encryptedFile(url.lastPathComponent)
                 }
                 for p in 0..<doc.pageCount {
                     if shouldCancel() { throw CancellationError() }
@@ -197,6 +203,9 @@ public enum PDFToolkit {
                              shouldCancel: @Sendable @escaping () -> Bool = { false }) throws -> [URL] {
         guard let doc = PDFDocument(url: url) else {
             throw PDFMergeError.unreadableFile(url.lastPathComponent)
+        }
+        if doc.isEncrypted || doc.isLocked {
+            throw PDFMergeError.encryptedFile(url.lastPathComponent)
         }
         let total = doc.pageCount
         guard total > 0 else { throw PDFMergeError.unreadableFile("Document has 0 pages") }
@@ -359,15 +368,9 @@ public enum PDFToolkit {
             extractedURLs = contents.filter { $0.pathExtension.lowercased() == "png" || $0.pathExtension.lowercased() == "jpg" }
         }
 
-        // If no embedded images extracted or tool unavailable, fall back to page rendering
+        // If no embedded images extracted or tool unavailable, do not claim page screenshots are extracted images
         if extractedURLs.isEmpty {
-            progress(0.5, "No embedded raster assets found; rendering pages to images…")
-            let rendered = try renderPagesToImages(url: url, dpi: 300, progress: progress, shouldCancel: shouldCancel)
-            for r in rendered {
-                let dest = outputFolder.appendingPathComponent(r.lastPathComponent)
-                try? FileManager.default.moveItem(at: r, to: dest)
-                extractedURLs.append(dest)
-            }
+            progress(1.0, "No embedded raster assets found in document.")
         }
 
         return extractedURLs
