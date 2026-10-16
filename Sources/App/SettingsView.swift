@@ -176,6 +176,10 @@ struct SettingsView: View {
             Button(action.title) { lastPreview = "Advanced Rename → Batch Pattern Rename" }
         case .destinations:
             Button(action.title) { lastPreview = "Copy or Move to a saved destination…" }
+        case .duplicates:
+            Button(action.title) { lastPreview = "Find exact duplicates in selected folders" }
+        case .zipInspector:
+            Button(action.title) { lastPreview = "Browse or extract ZIP entries" }
         }
     }
 
@@ -318,6 +322,18 @@ struct SettingsView: View {
                                                 showActivityError = true
                                             }
                                         }
+                                    }
+                                    .buttonStyle(.bordered).controlSize(.small)
+                                }
+                                if job.items.count == 1, job.outputs.count == 1,
+                                   !job.isUndone, (job.operation == "compress" || job.operation == "compressCustom"),
+                                   let input = job.items.first?.inputPath,
+                                   let output = job.outputs.first,
+                                   ComparisonWindow.supported(source: URL(fileURLWithPath: input),
+                                                              output: URL(fileURLWithPath: output)) {
+                                    Button("Compare") {
+                                        ComparisonWindow.show(source: URL(fileURLWithPath: input),
+                                                              output: URL(fileURLWithPath: output))
                                     }
                                     .buttonStyle(.bordered).controlSize(.small)
                                 }
