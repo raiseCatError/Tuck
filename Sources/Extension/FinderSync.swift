@@ -10,11 +10,46 @@ final class TuckFinderSync: FIFinderSync {
         static let compressMB = 300
         static let customSize = 350
         static let zip = 360
+
+        // PDF Toolkit tags
+        static let pdfMerge = 400
+        static let pdfSplitRange = 401
+        static let pdfSplitPages = 402
+        static let pdfRotate90 = 403
+        static let pdfRotate180 = 404
+        static let pdfRotate270 = 405
+        static let pdfOCR = 406
+        static let pdfExtractImages = 407
+        static let pdfToImages = 408
+
+        // Image Toolkit tags
+        static let imgToJPEG = 500
+        static let imgToPNG = 501
+        static let imgToHEIC = 502
+        static let imgToTIFF = 503
+        static let imgToWebP = 504
+        static let imgToPDF = 505
+        static let imgResize50 = 510
+        static let imgResize25 = 511
+        static let imgResizeCustom = 512
+
+        // Metadata tags
+        static let metaInspect = 600
+        static let metaStrip = 601
+
+        // Copy As tags
+        static let copyAbsPath = 700
+        static let copyRelPath = 701
+        static let copyFileName = 702
+        static let copyFileNameNoExt = 703
+        static let copyFileURL = 704
+        static let copyShellQuoted = 705
+        static let copySHA256 = 706
+
+        // Rename tags
+        static let renameBatch = 800
     }
 
-    // Finder can clear the selection context between building a menu and the click
-    // that activates it, so the URLs resolved while building the menu are reused by
-    // the action instead of being queried again after the menu closes.
     private var menuSelection: [URL]?
     private var menuTarget: URL?
 
@@ -74,16 +109,21 @@ final class TuckFinderSync: FIFinderSync {
             TuckLog.extensionLogger.info("extension.menu kind=\(kind.rawValue) skipped=desktop-hidden")
             return nil
         }
+
         let context: TuckContext
+        let imageExts = ["jpg", "jpeg", "png", "heic", "tif", "tiff", "bmp", "webp", "gif"]
         if kind == .contextualMenuForContainer {
             context = target?.standardizedFileURL.path == FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop").path ? .desktop : .folder
         } else if !selection.isEmpty && selection.allSatisfy({ $0.pathExtension.lowercased() == "pdf" }) {
             context = .pdf
-        } else if !selection.isEmpty && selection.allSatisfy({ ["jpg", "jpeg", "png", "heic", "tif", "tiff", "bmp"].contains($0.pathExtension.lowercased()) }) {
+        } else if !selection.isEmpty && selection.allSatisfy({ imageExts.contains($0.pathExtension.lowercased()) }) {
             context = .image
+        } else if !selection.isEmpty && selection.allSatisfy({ $0.pathExtension.lowercased() == "pdf" || imageExts.contains($0.pathExtension.lowercased()) }) {
+            context = .mixed
         } else {
             context = .other
         }
+
         let entries = TuckMenuModel.visible(in: context)
         let root = NSMenu(title: "Tuck")
         for action in entries {
@@ -97,6 +137,16 @@ final class TuckFinderSync: FIFinderSync {
                 item.submenu = makeCompressMenu()
             case .terminal:
                 item.action = #selector(openTerminal(_:))
+            case .pdfToolkit:
+                item.submenu = makePDFToolkitMenu(context: context)
+            case .imageToolkit:
+                item.submenu = makeImageToolkitMenu()
+            case .metadata:
+                item.submenu = makeMetadataMenu()
+            case .copyAs:
+                item.submenu = makeCopyAsMenu()
+            case .rename:
+                item.action = #selector(advancedRename(_:))
             }
             root.addItem(item)
         }
@@ -137,6 +187,104 @@ final class TuckFinderSync: FIFinderSync {
         menu.addItem(.separator())
         let zip = menu.addItem(withTitle: "Create ZIP Archive", action: #selector(compress(_:)), keyEquivalent: "")
         zip.tag = Tag.zip
+        return menu
+    }
+
+    private func makePDFToolkitMenu(context: TuckContext) -> NSMenu {
+        let menu = NSMenu(title: "PDF Toolkit")
+        let merge = menu.addItem(withTitle: "Merge into PDF…", action: #selector(pdfAction(_:)), keyEquivalent: "")
+        merge.tag = Tag.pdfMerge
+
+        if context == .pdf {
+            menu.addItem(.separator())
+            let splitRange = menu.addItem(withTitle: "Split by Page Range…", action: #selector(pdfAction(_:)), keyEquivalent: "")
+            splitRange.tag = Tag.pdfSplitRange
+
+            let splitPages = menu.addItem(withTitle: "Split Every Page", action: #selector(pdfAction(_:)), keyEquivalent: "")
+            splitPages.tag = Tag.pdfSplitPages
+
+            let rotateSubmenu = NSMenu(title: "Rotate Pages")
+            let r90 = rotateSubmenu.addItem(withTitle: "Rotate 90° Clockwise", action: #selector(pdfAction(_:)), keyEquivalent: "")
+            r90.tag = Tag.pdfRotate90
+            let r180 = rotateSubmenu.addItem(withTitle: "Rotate 180°", action: #selector(pdfAction(_:)), keyEquivalent: "")
+            r180.tag = Tag.pdfRotate180
+            let r270 = rotateSubmenu.addItem(withTitle: "Rotate 90° Counterclockwise", action: #selector(pdfAction(_:)), keyEquivalent: "")
+            r270.tag = Tag.pdfRotate270
+
+            let rotateItem = menu.addItem(withTitle: "Rotate Pages", action: nil, keyEquivalent: "")
+            rotateItem.submenu = rotateSubmenu
+
+            menu.addItem(.separator())
+            let ocr = menu.addItem(withTitle: "OCR (Recognize Text)…", action: #selector(pdfAction(_:)), keyEquivalent: "")
+            ocr.tag = Tag.pdfOCR
+
+            let extractImages = menu.addItem(withTitle: "Extract Embedded Images", action: #selector(pdfAction(_:)), keyEquivalent: "")
+            extractImages.tag = Tag.pdfExtractImages
+
+            let toImages = menu.addItem(withTitle: "Convert Pages to Images", action: #selector(pdfAction(_:)), keyEquivalent: "")
+            toImages.tag = Tag.pdfToImages
+        }
+        return menu
+    }
+
+    private func makeImageToolkitMenu() -> NSMenu {
+        let menu = NSMenu(title: "Image Toolkit")
+        let convertSubmenu = NSMenu(title: "Convert Format")
+        let toJPEG = convertSubmenu.addItem(withTitle: "Convert to JPEG", action: #selector(imageAction(_:)), keyEquivalent: "")
+        toJPEG.tag = Tag.imgToJPEG
+        let toPNG = convertSubmenu.addItem(withTitle: "Convert to PNG", action: #selector(imageAction(_:)), keyEquivalent: "")
+        toPNG.tag = Tag.imgToPNG
+        let toHEIC = convertSubmenu.addItem(withTitle: "Convert to HEIC", action: #selector(imageAction(_:)), keyEquivalent: "")
+        toHEIC.tag = Tag.imgToHEIC
+        let toTIFF = convertSubmenu.addItem(withTitle: "Convert to TIFF", action: #selector(imageAction(_:)), keyEquivalent: "")
+        toTIFF.tag = Tag.imgToTIFF
+        let toWebP = convertSubmenu.addItem(withTitle: "Convert to WebP", action: #selector(imageAction(_:)), keyEquivalent: "")
+        toWebP.tag = Tag.imgToWebP
+        let toPDF = convertSubmenu.addItem(withTitle: "Convert to PDF", action: #selector(imageAction(_:)), keyEquivalent: "")
+        toPDF.tag = Tag.imgToPDF
+
+        let convertItem = menu.addItem(withTitle: "Convert Format", action: nil, keyEquivalent: "")
+        convertItem.submenu = convertSubmenu
+
+        let resizeSubmenu = NSMenu(title: "Resize")
+        let r50 = resizeSubmenu.addItem(withTitle: "Scale 50%", action: #selector(imageAction(_:)), keyEquivalent: "")
+        r50.tag = Tag.imgResize50
+        let r25 = resizeSubmenu.addItem(withTitle: "Scale 25%", action: #selector(imageAction(_:)), keyEquivalent: "")
+        r25.tag = Tag.imgResize25
+        let rCustom = resizeSubmenu.addItem(withTitle: "Custom Dimensions…", action: #selector(imageAction(_:)), keyEquivalent: "")
+        rCustom.tag = Tag.imgResizeCustom
+
+        let resizeItem = menu.addItem(withTitle: "Resize", action: nil, keyEquivalent: "")
+        resizeItem.submenu = resizeSubmenu
+
+        return menu
+    }
+
+    private func makeMetadataMenu() -> NSMenu {
+        let menu = NSMenu(title: "Metadata")
+        let inspect = menu.addItem(withTitle: "Inspect Metadata…", action: #selector(metadataAction(_:)), keyEquivalent: "")
+        inspect.tag = Tag.metaInspect
+        let strip = menu.addItem(withTitle: "Strip Metadata", action: #selector(metadataAction(_:)), keyEquivalent: "")
+        strip.tag = Tag.metaStrip
+        return menu
+    }
+
+    private func makeCopyAsMenu() -> NSMenu {
+        let menu = NSMenu(title: "Copy As")
+        let p1 = menu.addItem(withTitle: "Absolute Path", action: #selector(copyAsAction(_:)), keyEquivalent: "")
+        p1.tag = Tag.copyAbsPath
+        let p2 = menu.addItem(withTitle: "Relative Path", action: #selector(copyAsAction(_:)), keyEquivalent: "")
+        p2.tag = Tag.copyRelPath
+        let p3 = menu.addItem(withTitle: "Filename", action: #selector(copyAsAction(_:)), keyEquivalent: "")
+        p3.tag = Tag.copyFileName
+        let p4 = menu.addItem(withTitle: "Filename Without Extension", action: #selector(copyAsAction(_:)), keyEquivalent: "")
+        p4.tag = Tag.copyFileNameNoExt
+        let p5 = menu.addItem(withTitle: "File URL", action: #selector(copyAsAction(_:)), keyEquivalent: "")
+        p5.tag = Tag.copyFileURL
+        let p6 = menu.addItem(withTitle: "Shell-Quoted Path", action: #selector(copyAsAction(_:)), keyEquivalent: "")
+        p6.tag = Tag.copyShellQuoted
+        let p7 = menu.addItem(withTitle: "SHA-256 Checksum", action: #selector(copyAsAction(_:)), keyEquivalent: "")
+        p7.tag = Tag.copySHA256
         return menu
     }
 
@@ -203,6 +351,105 @@ final class TuckFinderSync: FIFinderSync {
             return
         }
         dispatch("compress", paths: paths, argument: String(TuckPreferences.sizes[index]))
+    }
+
+    @objc func pdfAction(_ sender: NSMenuItem) {
+        let (selection, _) = resolveContext()
+        let paths = selection.map(\.path)
+        guard !paths.isEmpty else { return }
+
+        switch sender.tag {
+        case Tag.pdfMerge:
+            dispatch("pdfMerge", paths: paths)
+        case Tag.pdfSplitRange:
+            dispatch("pdfSplitRange", paths: paths)
+        case Tag.pdfSplitPages:
+            dispatch("pdfSplitPages", paths: paths)
+        case Tag.pdfRotate90:
+            dispatch("pdfRotate", paths: paths, argument: "90")
+        case Tag.pdfRotate180:
+            dispatch("pdfRotate", paths: paths, argument: "180")
+        case Tag.pdfRotate270:
+            dispatch("pdfRotate", paths: paths, argument: "270")
+        case Tag.pdfOCR:
+            dispatch("pdfOCR", paths: paths)
+        case Tag.pdfExtractImages:
+            dispatch("pdfExtractImages", paths: paths)
+        case Tag.pdfToImages:
+            dispatch("pdfToImages", paths: paths)
+        default:
+            break
+        }
+    }
+
+    @objc func imageAction(_ sender: NSMenuItem) {
+        let (selection, _) = resolveContext()
+        let paths = selection.map(\.path)
+        guard !paths.isEmpty else { return }
+
+        switch sender.tag {
+        case Tag.imgToJPEG:
+            dispatch("imageConvert", paths: paths, argument: "jpeg")
+        case Tag.imgToPNG:
+            dispatch("imageConvert", paths: paths, argument: "png")
+        case Tag.imgToHEIC:
+            dispatch("imageConvert", paths: paths, argument: "heic")
+        case Tag.imgToTIFF:
+            dispatch("imageConvert", paths: paths, argument: "tiff")
+        case Tag.imgToWebP:
+            dispatch("imageConvert", paths: paths, argument: "webp")
+        case Tag.imgToPDF:
+            dispatch("pdfMerge", paths: paths)
+        case Tag.imgResize50:
+            dispatch("imageResize", paths: paths, argument: "pct:50")
+        case Tag.imgResize25:
+            dispatch("imageResize", paths: paths, argument: "pct:25")
+        case Tag.imgResizeCustom:
+            dispatch("imageResizeCustom", paths: paths)
+        default:
+            break
+        }
+    }
+
+    @objc func metadataAction(_ sender: NSMenuItem) {
+        let (selection, _) = resolveContext()
+        let paths = selection.map(\.path)
+        guard !paths.isEmpty else { return }
+
+        switch sender.tag {
+        case Tag.metaInspect:
+            dispatch("metaInspect", paths: paths)
+        case Tag.metaStrip:
+            dispatch("metaStrip", paths: paths)
+        default:
+            break
+        }
+    }
+
+    @objc func copyAsAction(_ sender: NSMenuItem) {
+        let (selection, _) = resolveContext()
+        let paths = selection.map(\.path)
+        guard !paths.isEmpty else { return }
+
+        let formatStr: String
+        switch sender.tag {
+        case Tag.copyAbsPath: formatStr = CopyAsFormat.absolutePath.rawValue
+        case Tag.copyRelPath: formatStr = CopyAsFormat.relativePath.rawValue
+        case Tag.copyFileName: formatStr = CopyAsFormat.fileNameWithExt.rawValue
+        case Tag.copyFileNameNoExt: formatStr = CopyAsFormat.fileNameWithoutExt.rawValue
+        case Tag.copyFileURL: formatStr = CopyAsFormat.fileURL.rawValue
+        case Tag.copyShellQuoted: formatStr = CopyAsFormat.shellQuoted.rawValue
+        case Tag.copySHA256: formatStr = CopyAsFormat.sha256.rawValue
+        default: formatStr = CopyAsFormat.absolutePath.rawValue
+        }
+        dispatch("copyAs", paths: paths, argument: formatStr)
+    }
+
+    @objc func advancedRename(_ sender: NSMenuItem) {
+        let (selection, _) = resolveContext()
+        let paths = selection.map(\.path)
+        guard !paths.isEmpty else { return }
+        dispatch("advancedRename", paths: paths)
     }
 
     private func dispatch(_ operation: String, paths: [String], argument: String? = nil) {

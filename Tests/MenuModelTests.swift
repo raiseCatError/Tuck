@@ -14,10 +14,13 @@ struct MenuModelTests {
             }
         }
         TuckPreferences.order = ["terminal", "compress", "openWith", "newFile"]
-        assert(TuckMenuModel.visible(in: .image).map(\.id) == ["terminal", "compress", "openWith", "newFile"])
-        assert(!TuckMenuModel.visible(in: .folder).contains(.compress))
+        let visibleInImage = TuckMenuModel.visible(in: .image).map(\.id)
+        assert(visibleInImage == ["terminal", "compress", "openWith", "imageToolkit", "metadata", "copyAs", "rename"])
+        assert(!visibleInImage.contains("newFile"))
+        assert(!visibleInImage.contains("pdfToolkit"))
+        assert(!TuckMenuModel.visible(in: .folder).contains(where: { $0.id == "compress" }))
         TuckPreferences.setEnabled("terminal", to: false)
-        assert(!TuckMenuModel.visible(in: .image).contains(.terminal))
+        assert(!TuckMenuModel.visible(in: .image).contains(where: { $0.id == "terminal" }))
         TuckPreferences.order = ["newFile", "newFile", "nonsense", "terminal"]
         assert(Set(TuckPreferences.order).count == TuckPreferences.defaults.count)
         print("MenuModelTests passed")

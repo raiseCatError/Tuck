@@ -124,6 +124,51 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             runCompression(paths: request.paths, target: CompressionTarget(megabytes: size), operation: request.operation)
         case "zip":
             runZip(paths: request.paths)
+
+        // MARK: - PDF Toolkit
+        case "pdfMerge":
+            runPDFMerge(paths: request.paths)
+        case "pdfSplitRange":
+            runPDFSplit(paths: request.paths, customRange: true)
+        case "pdfSplitPages":
+            runPDFSplit(paths: request.paths, customRange: false)
+        case "pdfRotate":
+            let deg = request.argument.flatMap(Int.init) ?? 90
+            runPDFRotate(paths: request.paths, degrees: deg)
+        case "pdfOCR":
+            runPDFOCR(paths: request.paths)
+        case "pdfExtractImages":
+            runPDFExtractImages(paths: request.paths)
+        case "pdfToImages":
+            runPDFToImages(paths: request.paths)
+
+        // MARK: - Image Toolkit
+        case "imageConvert":
+            guard let fmt = request.argument else { return }
+            runImageConvert(paths: request.paths, targetFormat: fmt)
+        case "imageResize":
+            let arg = request.argument ?? "pct:50"
+            runImageResize(paths: request.paths, spec: arg)
+        case "imageResizeCustom":
+            if let spec = promptForResize() {
+                runImageResize(paths: request.paths, spec: spec)
+            }
+
+        // MARK: - Metadata
+        case "metaInspect":
+            runMetadataInspect(paths: request.paths)
+        case "metaStrip":
+            runMetadataStrip(paths: request.paths)
+
+        // MARK: - Copy As
+        case "copyAs":
+            let fmt = request.argument.flatMap(CopyAsFormat.init(rawValue:)) ?? .absolutePath
+            runCopyAs(paths: request.paths, format: fmt)
+
+        // MARK: - Advanced Rename
+        case "advancedRename":
+            runAdvancedRename(paths: request.paths)
+
         default:
             TuckLog.helperLogger.error("helper.handle-aborted op=\(request.operation, privacy: .public) reason=unknown-operation")
             return
@@ -303,6 +348,285 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         alert.accessoryView = stack
         NSApp.activate(ignoringOtherApps: true)
         return alert.runModal() == .alertFirstButtonReturn ? Double(field.stringValue) : nil
+    }
+
+    private func promptForResize() -> String? {
+        let alert = NSAlert()
+        alert.messageText = "Resize Image"
+        alert.informativeText = "Enter dimensions (e.g. '800x600', '1920' for max edge, or '50%' for scale)."
+        alert.addButton(withTitle: "Resize")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: "1920")
+        field.frame = NSRect(x: 0, y: 0, width: 290, height: 24)
+        alert.accessoryView = field
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
+    }
+
+    // MARK: - PDF Toolkit Handlers
+
+    private func runPDFMerge(paths: [String]) {
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+        let progress = ProgressWindow()
+        let cancelled = CancellationFlag()
+        progress.present(title: "Merging into PDF", onCancel: { cancelled.cancel() })
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                let merged = try PDFToolkit.merge(urls: urls, progress: { frac, note in
+                    Task { @MainActor in progress.update(fraction: frac, detail: note) }
+                }, shouldCancel: { cancelled.isCancelled })
+
+                await MainActor.run {
+                    progress.dismiss()
+                    NSWorkspace.shared.activateFileViewerSelecting([merged])
+                    self?.report("Saved merged document as:\n\(merged.lastPathComponent)", title: "PDF Merged")
+                }
+            } catch {
+                await MainActor.run {
+                    progress.dismiss()
+                    self?.report(error.localizedDescription, title: "PDF Merge Failed")
+                }
+            }
+        }
+    }
+
+    private func runPDFSplit(paths: [String], customRange: Bool) {
+        guard let first = paths.first else { return }
+        let url = URL(fileURLWithPath: first)
+        var rangeDesc = "each"
+
+        if customRange {
+            let alert = NSAlert()
+            alert.messageText = "Split PDF by Page Range"
+            alert.informativeText = "Enter page numbers and ranges (e.g. '1-3,5,8-12'):"
+            alert.addButton(withTitle: "Split")
+            alert.addButton(withTitle: "Cancel")
+            let field = NSTextField(string: "1-3")
+            field.frame = NSRect(x: 0, y: 0, width: 290, height: 24)
+            alert.accessoryView = field
+            NSApp.activate(ignoringOtherApps: true)
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            rangeDesc = field.stringValue
+        }
+
+        let progress = ProgressWindow()
+        let cancelled = CancellationFlag()
+        progress.present(title: "Splitting PDF", onCancel: { cancelled.cancel() })
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                let outputs = try PDFToolkit.split(url: url, rangeDescription: rangeDesc, progress: { frac, note in
+                    Task { @MainActor in progress.update(fraction: frac, detail: note) }
+                }, shouldCancel: { cancelled.isCancelled })
+
+                await MainActor.run {
+                    progress.dismiss()
+                    if !outputs.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(outputs) }
+                    self?.report("Created \(outputs.count) split PDF(s).", title: "PDF Split Complete")
+                }
+            } catch {
+                await MainActor.run {
+                    progress.dismiss()
+                    self?.report(error.localizedDescription, title: "PDF Split Failed")
+                }
+            }
+        }
+    }
+
+    private func runPDFRotate(paths: [String], degrees: Int) {
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+        var outputs: [URL] = []
+        for url in urls {
+            if let rotated = try? PDFToolkit.rotate(url: url, degrees: degrees) {
+                outputs.append(rotated)
+            }
+        }
+        if !outputs.isEmpty {
+            NSWorkspace.shared.activateFileViewerSelecting(outputs)
+            report("Rotated \(outputs.count) document(s) by \(degrees)°.", title: "PDF Rotated")
+        }
+    }
+
+    private func runPDFOCR(paths: [String]) {
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+        let progress = ProgressWindow()
+        let cancelled = CancellationFlag()
+        progress.present(title: "Running On-Device OCR", onCancel: { cancelled.cancel() })
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            var outputs: [URL] = []
+            for (idx, url) in urls.enumerated() {
+                if cancelled.isCancelled { break }
+                let frac = Double(idx) / Double(urls.count)
+                Task { @MainActor in progress.update(fraction: frac, detail: url.lastPathComponent) }
+                if let ocrOutput = try? PDFToolkit.ocr(url: url, progress: { p, n in
+                    Task { @MainActor in progress.update(fraction: frac + (p / Double(urls.count)), detail: n) }
+                }, shouldCancel: { cancelled.isCancelled }) {
+                    outputs.append(ocrOutput)
+                }
+            }
+            await MainActor.run {
+                progress.dismiss()
+                if !outputs.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(outputs) }
+                self?.report("Generated \(outputs.count) searchable OCR PDF(s).", title: "OCR Complete")
+            }
+        }
+    }
+
+    private func runPDFExtractImages(paths: [String]) {
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+        var totalImages: [URL] = []
+        for url in urls {
+            if let extracted = try? PDFToolkit.extractImages(url: url) {
+                totalImages.append(contentsOf: extracted)
+            }
+        }
+        if !totalImages.isEmpty {
+            NSWorkspace.shared.activateFileViewerSelecting(totalImages)
+            report("Extracted \(totalImages.count) image assets.", title: "Images Extracted")
+        } else {
+            report("No image assets could be extracted.", title: "Image Extraction")
+        }
+    }
+
+    private func runPDFToImages(paths: [String]) {
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+        var totalImages: [URL] = []
+        for url in urls {
+            if let rendered = try? PDFToolkit.renderPagesToImages(url: url) {
+                totalImages.append(contentsOf: rendered)
+            }
+        }
+        if !totalImages.isEmpty {
+            NSWorkspace.shared.activateFileViewerSelecting(totalImages)
+            report("Rendered \(totalImages.count) page image(s).", title: "Pages Converted")
+        }
+    }
+
+    // MARK: - Image Toolkit Handlers
+
+    private func runImageConvert(paths: [String], targetFormat: String) {
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+        var outputs: [URL] = []
+        var failures: [String] = []
+
+        for url in urls {
+            do {
+                let converted = try ImageToolkit.convert(url: url, targetFormat: targetFormat)
+                outputs.append(converted)
+            } catch {
+                failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+
+        if !outputs.isEmpty {
+            NSWorkspace.shared.activateFileViewerSelecting(outputs)
+        }
+        if !failures.isEmpty {
+            report(failures.joined(separator: "\n"), title: "Conversion Issues")
+        } else if !outputs.isEmpty {
+            report("Converted \(outputs.count) image(s) to \(targetFormat.uppercased()).", title: "Conversion Finished")
+        }
+    }
+
+    private func runImageResize(paths: [String], spec: String) {
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+        let mode: ResizeMode
+        if spec.hasPrefix("pct:") {
+            let pct = Double(spec.dropFirst(4)) ?? 50.0
+            mode = .percentage(pct)
+        } else if spec.contains("x") {
+            let parts = spec.components(separatedBy: "x")
+            let w = parts.first.flatMap(Int.init) ?? 800
+            let h = parts.last.flatMap(Int.init) ?? 600
+            mode = .exact(width: w, height: h)
+        } else if let edge = Int(spec) {
+            mode = .longestEdge(edge)
+        } else {
+            mode = .percentage(50)
+        }
+
+        var outputs: [URL] = []
+        for url in urls {
+            if let resized = try? ImageToolkit.resize(url: url, mode: mode) {
+                outputs.append(resized)
+            }
+        }
+        if !outputs.isEmpty {
+            NSWorkspace.shared.activateFileViewerSelecting(outputs)
+            report("Resized \(outputs.count) image(s).", title: "Resize Complete")
+        }
+    }
+
+    // MARK: - Metadata Handlers
+
+    private func runMetadataInspect(paths: [String]) {
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+        let reports = urls.map { MetadataToolkit.inspect(url: $0).summary }
+        report(reports.joined(separator: "\n\n--------------------\n\n"), title: "Metadata Inspector")
+    }
+
+    private func runMetadataStrip(paths: [String]) {
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+        var outputs: [URL] = []
+        for url in urls {
+            if let stripped = try? MetadataToolkit.strip(url: url) {
+                outputs.append(stripped)
+            }
+        }
+        if !outputs.isEmpty {
+            NSWorkspace.shared.activateFileViewerSelecting(outputs)
+            report("Created \(outputs.count) stripped file(s) with clean metadata.", title: "Metadata Stripped")
+        }
+    }
+
+    // MARK: - Copy As & Advanced Rename
+
+    private func runCopyAs(paths: [String], format: CopyAsFormat) {
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+        let text = CopyAsToolkit.format(urls: urls, format: format)
+        CopyAsToolkit.copyToClipboard(text: text)
+        report("Copied \(urls.count) item(s) as \(format.rawValue) to clipboard:\n\n\(text)", title: "Copied to Clipboard")
+    }
+
+    private func runAdvancedRename(paths: [String]) {
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+        guard !urls.isEmpty else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Advanced Batch Rename"
+        alert.informativeText = "Configure find and replace, prefix/suffix, or numbering pattern:"
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 6
+
+        let findField = NSTextField(string: "")
+        findField.placeholderString = "Find text (or regex)"
+        let replaceField = NSTextField(string: "")
+        replaceField.placeholderString = "Replace with"
+
+        stack.addArrangedSubview(findField)
+        stack.addArrangedSubview(replaceField)
+        stack.frame = NSRect(x: 0, y: 0, width: 300, height: 60)
+        alert.accessoryView = stack
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let rule = RenameRule(op: .findReplace(find: findField.stringValue, replace: replaceField.stringValue, isRegex: false))
+        let plan = AdvancedRenameToolkit.preview(urls: urls, rule: rule)
+
+        do {
+            let renamed = try AdvancedRenameToolkit.execute(plan: plan)
+            NSWorkspace.shared.activateFileViewerSelecting(renamed)
+            report("Successfully renamed \(renamed.count) file(s).", title: "Rename Complete")
+        } catch {
+            report("Rename failed: \(error.localizedDescription)", title: "Rename Failed")
+        }
     }
 
     private func report(_ message: String, title: String = "Tuck") {

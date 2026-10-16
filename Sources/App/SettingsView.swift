@@ -108,9 +108,7 @@ struct SettingsView: View {
     }
 
     private var previewActions: [TuckAction] {
-        order.compactMap(TuckAction.init(rawValue:)).filter {
-            enabled.contains($0.id) && ($0 != .compress || previewContext.hasSelection) && (previewContext != .desktop || desktop)
-        }
+        TuckMenuModel.visible(in: previewContext).filter { enabled.contains($0.id) }
     }
 
     @ViewBuilder private func previewContent(for action: TuckAction) -> some View {
@@ -139,6 +137,30 @@ struct SettingsView: View {
             }
         case .terminal:
             Button(action.title) { lastPreview = "Open Terminal Here → \(terminalName)" }
+        case .pdfToolkit:
+            Menu(action.title) {
+                Button("Merge into PDF…") { lastPreview = "PDF Toolkit → Merge into PDF" }
+                Button("Split by Page Range…") { lastPreview = "PDF Toolkit → Split by Page Range" }
+                Button("OCR (Recognize Text)…") { lastPreview = "PDF Toolkit → OCR" }
+            }
+        case .imageToolkit:
+            Menu(action.title) {
+                Button("Convert Format") { lastPreview = "Image Toolkit → Convert Format" }
+                Button("Resize") { lastPreview = "Image Toolkit → Resize" }
+            }
+        case .metadata:
+            Menu(action.title) {
+                Button("Inspect Metadata…") { lastPreview = "Metadata → Inspect Metadata" }
+                Button("Strip Metadata") { lastPreview = "Metadata → Strip Metadata" }
+            }
+        case .copyAs:
+            Menu(action.title) {
+                Button("Absolute Path") { lastPreview = "Copy As → Absolute Path" }
+                Button("Filename") { lastPreview = "Copy As → Filename" }
+                Button("SHA-256 Checksum") { lastPreview = "Copy As → SHA-256 Checksum" }
+            }
+        case .rename:
+            Button(action.title) { lastPreview = "Advanced Rename → Batch Pattern Rename" }
         }
     }
 
