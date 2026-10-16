@@ -47,7 +47,7 @@ struct JobManagerTests {
                 progress(0.5, "Working")
                 try await Task.sleep(nanoseconds: 100_000_000)
                 if token.isCancelled { throw CancellationError() }
-                return []
+                return JobOutcome()
             }
             ids.append(id)
         }
@@ -73,7 +73,7 @@ struct JobManagerTests {
         let partialId = manager.enqueue(title: "Partial", operation: "imageConvert",
                                         paths: ["/tmp/input"], canUndo: true) { token, progress in
             try await Task.sleep(nanoseconds: 60_000_000)
-            return [partial]
+            return JobOutcome(outputs: [partial])
         }
         manager.cancel(jobId: partialId)
         for _ in 0..<100 {
