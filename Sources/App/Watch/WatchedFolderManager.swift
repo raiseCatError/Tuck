@@ -58,6 +58,10 @@ final class WatchedFolderManager {
                                             object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.reload() }
         })
+        observers.append(center.addObserver(forName: RecipePreferences.changed,
+                                            object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.reload() }
+        })
         let workspace = NSWorkspace.shared.notificationCenter
         for event in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] {
             observers.append(workspace.addObserver(forName: event, object: nil, queue: .main) { [weak self] _ in
