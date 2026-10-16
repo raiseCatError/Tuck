@@ -154,6 +154,7 @@ struct SettingsView: View {
             Menu(action.title) {
                 Button("Merge into PDF…") { lastPreview = "PDF Toolkit → Merge into PDF" }
                 Button("Split by Page Range…") { lastPreview = "PDF Toolkit → Split by Page Range" }
+                Button("Reorder Pages…") { lastPreview = "PDF Toolkit → Reorder PDF pages" }
                 Button("OCR (Recognize Text)…") { lastPreview = "PDF Toolkit → OCR" }
             }
         case .imageToolkit:
