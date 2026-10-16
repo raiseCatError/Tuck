@@ -15,7 +15,8 @@ struct SafeUndoTests {
         let generatedJob = JobRecord(title: "Generate", operation: "pdfMerge",
                                      status: .completed, outputs: [generated.path],
                                      canUndo: true, outputProofs: [proof])
-        assert(try ProtectedUndo.validatedProofs(for: generatedJob).count == 1)
+        let validated = try ProtectedUndo.validatedProofs(for: generatedJob)
+        assert(validated.count == 1)
 
         // A same-name replacement must never be deleted.
         try fm.removeItem(at: generated)
