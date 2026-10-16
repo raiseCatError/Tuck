@@ -24,22 +24,29 @@ final class CjpegMaker: CandidateMaker {
     }
 
     func encode(image: CGImage, quality: Double, into work: WorkArea) throws -> EncodeOutcome? {
-        let ppm = work.makeTemporary("cjpeg-in", extension: "ppm")
+        let ppm = work.makeTemporary("cjpeg-in-\(UUID().uuidString)", extension: "ppm")
         try ImageFacts.writePPM(image, to: ppm)
         defer { work.discard(ppm) }
-        let output = work.makeTemporary("cjpeg-out", extension: "jpg")
-        defer { work.discard(output) }
+        let output = work.makeTemporary("cjpeg-out-\(UUID().uuidString)", extension: "jpg")
         // MozJPEG and Jpegli both expose -quality as 1...100; jpegli also accepts
         // a distance, but quality keeps the ladder comparable across encoders.
-        var arguments = ["-quality", String(Int((quality * 100).rounded()))]
-        if progressive { arguments.append("-progressive") }
-        arguments += ["-optimize", ppm.path, output.path]
+        let qualityNumber = String(Int((quality * 100).rounded()))
+        let arguments: [String]
+        if tool.name == "cjpegli" {
+            // Jpegli uses positional INPUT OUTPUT followed by -q quality.
+            arguments = [ppm.path, output.path, "-q", qualityNumber]
+        } else {
+            // MozJPEG and libjpeg-turbo use portable libjpeg -outfile syntax.
+            arguments = ["-quality", qualityNumber] +
+                (progressive ? ["-progressive"] : []) +
+                ["-optimize", "-outfile", output.path, ppm.path]
+        }
         guard (try? Toolchain.run(tool, arguments, timeout: 120, shouldCancel: shouldCancel)) != nil else {
             work.discard(output)
             return nil
         }
         let bytes = ImageFacts.byteSize(output)
-        guard bytes > 0 else { return nil }
+        guard bytes > 0 else { work.discard(output); return nil }
         return EncodeOutcome(file: output, bytes: bytes, lossless: false, note: "quality \(Int(quality * 100))")
     }
 }
@@ -56,7 +63,7 @@ final class ImageIOJPEGMaker: CandidateMaker {
 
     func encode(image: CGImage, quality: Double, into work: WorkArea) throws -> EncodeOutcome? {
         if shouldCancel() { return nil }
-        let output = work.makeTemporary("imageio", extension: "jpg")
+        let output = work.makeTemporary("imageio-\(UUID().uuidString)", extension: "jpg")
         do {
             try ImageFacts.encode(image, to: output, type: .jpeg, quality: quality,
                                   extra: [kCGImagePropertyOrientation: 1])
@@ -110,9 +117,8 @@ enum LosslessJPEG {
         for tool in [Toolchain.mozjpegTran, Toolchain.turboTran] {
             guard let tool else { continue }
             if shouldCancel() { return nil }
-            let output = work.makeTemporary("jpegtran", extension: "jpg")
-            defer { work.discard(output) }
-            let arguments = ["-optimize", "-progressive", "-copy", "all", source.path, output.path]
+            let output = work.makeTemporary("jpegtran-\(UUID().uuidString)", extension: "jpg")
+            let arguments = ["-optimize", "-progressive", "-copy", "all", "-outfile", output.path, source.path]
             guard (try? Toolchain.run(tool, arguments, timeout: 120, shouldCancel: shouldCancel)) != nil else {
                 work.discard(output)
                 continue
@@ -121,6 +127,7 @@ enum LosslessJPEG {
             if bytes > 0, bytes <= ImageFacts.byteSize(source) {
                 return EncodeOutcome(file: output, bytes: bytes, lossless: true, note: "lossless Huffman/progressive rewrite")
             }
+            work.discard(output)
         }
         return nil
     }
