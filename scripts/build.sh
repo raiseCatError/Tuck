@@ -23,7 +23,7 @@ xcrun swiftc -swift-version 6 -O -sdk "$SDK" -target "$TARGET" \
 xcrun swiftc -swift-version 6 -O -sdk "$SDK" -target "$TARGET" \
   -module-name Tuck -parse-as-library -framework AppKit -framework SwiftUI -framework PDFKit \
   -framework CryptoKit -framework ImageIO -framework UniformTypeIdentifiers \
-  "$ROOT"/Sources/Shared/*.swift "$ROOT"/Sources/App/*.swift \
+  "$ROOT"/Sources/Shared/*.swift "$ROOT"/Sources/App/*.swift "$ROOT"/Sources/App/*/*.swift \
   -o "$APP/Contents/MacOS/Tuck"
 
 codesign --force -s - --entitlements "$ROOT/Resources/Extension.entitlements" "$EXT"

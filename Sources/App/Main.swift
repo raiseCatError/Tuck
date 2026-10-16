@@ -67,7 +67,7 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.title = "Tuck Settings"
-        window.contentView = NSHostingView(rootView: SettingsView())
+        window.contentViewController = NSHostingController(rootView: SettingsView())
         window.center()
         window.isReleasedWhenClosed = false
         settingsWindow = window
@@ -121,35 +121,112 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             guard let size, (0.1...500).contains(size) else {
                 TuckLog.helperLogger.error("helper.handle-aborted op=\(request.operation, privacy: .public) reason=invalid-size"); return
             }
-            let paths = request.paths
-            Task.detached(priority: .userInitiated) { [weak self] in
-                let results = FileWork.compress(paths, targetMB: size)
-                await MainActor.run {
-                    TuckLog.helperLogger.info("helper.result op=\(request.operation, privacy: .public) outputs=\(results.files.count) failures=\(results.errors.count)")
-                    if !results.files.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(results.files) }
-                    if !results.errors.isEmpty { self?.report(results.errors.joined(separator: "\n")) }
-                }
-            }
+            runCompression(paths: request.paths, target: CompressionTarget(megabytes: size), operation: request.operation)
         case "zip":
-            let paths = request.paths
-            Task.detached(priority: .userInitiated) { [weak self] in
-                do {
-                    let output = try FileWork.zip(paths)
-                    await MainActor.run {
-                        TuckLog.helperLogger.info("helper.result op=zip outcome=created")
-                        NSWorkspace.shared.activateFileViewerSelecting([output])
-                    }
-                } catch {
-                    await MainActor.run {
-                        TuckLog.helperLogger.error("helper.result op=zip outcome=failed detail=\(error.localizedDescription, privacy: .private)")
-                        self?.report(error.localizedDescription)
-                    }
-                }
-            }
+            runZip(paths: request.paths)
         default:
             TuckLog.helperLogger.error("helper.handle-aborted op=\(request.operation, privacy: .public) reason=unknown-operation")
             return
         }
+    }
+
+    // MARK: - Compression
+
+    /// Runs size reduction off the main thread with a cancellable progress
+    /// window, then reports exactly what happened before revealing the results.
+    private func runCompression(paths: [String], target: CompressionTarget, operation: String) {
+        guard !paths.isEmpty else {
+            TuckLog.helperLogger.error("helper.handle-aborted op=\(operation, privacy: .public) reason=no-path")
+            return
+        }
+        let cancelled = CancellationFlag()
+        let progress = ProgressWindow()
+        progress.present(title: "Compressing to under \(target.description)", onCancel: { cancelled.cancel() })
+        let reporter: @Sendable (CompressionProgress) -> Void = { update in
+            Task { @MainActor in
+                progress.update(fraction: update.fraction,
+                                detail: update.fileName.isEmpty ? update.note : "\(update.fileName): \(update.note)")
+            }
+        }
+        let shouldCancel: @Sendable () -> Bool = { cancelled.isCancelled }
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let outcome = CompressionEngine.compress(paths: paths, target: target,
+                                                     progress: reporter, shouldCancel: shouldCancel)
+            await MainActor.run {
+                self?.finishCompression(outcome: outcome, target: target, operation: operation,
+                                        progress: progress, cancelled: cancelled)
+            }
+        }
+    }
+
+    private func finishCompression(outcome: CompressionEngine.Outcome, target: CompressionTarget,
+                                   operation: String, progress: ProgressWindow, cancelled: CancellationFlag) {
+        progress.dismiss()
+        if cancelled.isCancelled {
+            TuckLog.compressionLogger.info("helper.result op=\(operation, privacy: .public) outcome=cancelled")
+            report("Compression cancelled. No output was published.")
+            return
+        }
+        let outputs = outcome.results.compactMap(\.output)
+        if !outputs.isEmpty {
+            NSWorkspace.shared.activateFileViewerSelecting(outputs)
+        }
+        var lines: [String] = []
+        for result in outcome.results {
+            let megabytes = String(format: "%.2f", Double(result.resultBytes) / 1_000_000)
+            let original = String(format: "%.2f", Double(result.originalBytes) / 1_000_000)
+            let saved = String(format: "%.1f", result.reductionPercent)
+            let within = result.resultBytes < target.maxBytes ? "under \(target.description)" : "OVER the limit"
+            var line = "\(result.source.lastPathComponent): \(original) MB → \(megabytes) MB (\(saved)% smaller, \(within))"
+            if result.alreadyWithinLimit { line += "\nAlready met the limit, so a lossless copy was made." }
+            line += "\n\(result.output?.lastPathComponent ?? "")"
+            lines.append(line)
+        }
+        for (url, failure) in outcome.failures {
+            lines.append("\(url.lastPathComponent): \(failure.description)")
+        }
+        if lines.isEmpty {
+            TuckLog.helperLogger.error("helper.result op=\(operation, privacy: .public) outcome=no-output")
+            report("Nothing could be compressed.")
+            return
+        }
+        TuckLog.compressionLogger.info("helper.result op=\(operation, privacy: .public) outputs=\(outputs.count) failures=\(outcome.failures.count)")
+        report(lines.joined(separator: "\n\n"), title: outputs.isEmpty ? "Compression failed" : "Compression finished")
+    }
+
+    private func runZip(paths: [String]) {
+        guard !paths.isEmpty else {
+            TuckLog.helperLogger.error("helper.handle-aborted op=zip reason=no-path")
+            return
+        }
+        let cancelled = CancellationFlag()
+        let progress = ProgressWindow()
+        progress.present(title: "Creating ZIP archive", onCancel: { cancelled.cancel() })
+        Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                let result = try FileWork.zip(paths, progress: { fraction in
+                    Task { @MainActor in progress.update(fraction: fraction, detail: "") }
+                }, shouldCancel: { cancelled.isCancelled })
+                await MainActor.run {
+                    progress.dismiss()
+                    NSWorkspace.shared.activateFileViewerSelecting([result.file])
+                    let megabytes = String(format: "%.2f", Double(ImageFacts.byteSize(result.file)) / 1_000_000)
+                    self?.report("\(result.file.lastPathComponent)\n\(megabytes) MB using \(result.strategy).", title: "Archive ready")
+                }
+            } catch {
+                await MainActor.run {
+                    progress.dismiss()
+                    TuckLog.compressionLogger.error("helper.result op=zip outcome=failed detail=\(error.localizedDescription, privacy: .private)")
+                    self?.report(Self.describe(error), title: "Archive failed")
+                }
+            }
+        }
+    }
+
+    private static func describe(_ error: Error) -> String {
+        if let failure = error as? CompressionFailure { return failure.description }
+        return error.localizedDescription
     }
 
     private func openTerminal(at path: String) {
@@ -228,10 +305,10 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         return alert.runModal() == .alertFirstButtonReturn ? Double(field.stringValue) : nil
     }
 
-    private func report(_ message: String) {
-        TuckLog.helperLogger.error("helper.reported detail=\(message, privacy: .private)")
+    private func report(_ message: String, title: String = "Tuck") {
+        TuckLog.helperLogger.error("helper.reported title=\(title, privacy: .public) detail=\(message, privacy: .private)")
         let alert = NSAlert()
-        alert.messageText = "Tuck"
+        alert.messageText = title
         alert.informativeText = message
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")

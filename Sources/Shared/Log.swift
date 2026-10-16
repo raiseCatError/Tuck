@@ -13,4 +13,5 @@ enum TuckLog {
     static let extensionLogger = Logger(subsystem: subsystem, category: "extension")
     static let ipcLogger = Logger(subsystem: subsystem, category: "ipc")
     static let helperLogger = Logger(subsystem: subsystem, category: "helper")
+    static let compressionLogger = Logger(subsystem: subsystem, category: "compression")
 }
