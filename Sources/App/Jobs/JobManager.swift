@@ -166,16 +166,18 @@ final class JobManager: ObservableObject {
     private func fingerprintOutputs(jobId: UUID, paths: [String]) {
         Task.detached(priority: .utility) { [weak self] in
             let identities = paths.compactMap { try? OutputIdentity.capture(URL(fileURLWithPath: $0)) }
-            await MainActor.run {
-                guard let self, let index = self.jobs.firstIndex(where: { $0.id == jobId }),
-                      !self.jobs[index].isUndone else { return }
-                let complete = identities.count == paths.count && !paths.isEmpty
-                    && Set(identities.map(\.path)) == Set(paths)
-                self.jobs[index].outputProofs = complete ? identities : nil
-                self.jobs[index].canUndo = complete
-                self.persistHistory()
-            }
+            await self?.completeFingerprint(jobId: jobId, paths: paths, identities: identities)
         }
+    }
+
+    private func completeFingerprint(jobId: UUID, paths: [String], identities: [OutputIdentity]) {
+        guard let index = jobs.firstIndex(where: { $0.id == jobId }),
+              !jobs[index].isUndone else { return }
+        let complete = identities.count == paths.count && !paths.isEmpty
+            && Set(identities.map(\.path)) == Set(paths)
+        jobs[index].outputProofs = complete ? identities : nil
+        jobs[index].canUndo = complete
+        persistHistory()
     }
 
     func cancel(jobId: UUID) {
