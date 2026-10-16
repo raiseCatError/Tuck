@@ -5,6 +5,7 @@ import AppKit
 final class JobManager: ObservableObject {
     typealias Reporter = @Sendable (Double, String) -> Void
     typealias Executor = @Sendable (CancellationFlag, @escaping Reporter) async throws -> [URL]
+    typealias Completion = @MainActor (JobRecord) -> Void
 
     static let shared = JobManager()
 
@@ -17,6 +18,7 @@ final class JobManager: ObservableObject {
     private var activeJobIDs = Set<UUID>()
     private var workQueue: [UUID] = []
     private var executors: [UUID: Executor] = [:]
+    private var completions: [UUID: Completion] = [:]
     private var cancelTokens: [UUID: CancellationFlag] = [:]
     private var undoRequested = Set<UUID>()
     private var undoInProgress = Set<UUID>()
@@ -65,11 +67,13 @@ final class JobManager: ObservableObject {
     @discardableResult
     func enqueue(title: String, operation: String, paths: [String],
                  canUndo: Bool = true,
+                 onComplete: Completion? = nil,
                  executor: @escaping Executor) -> UUID {
         let record = JobRecord(title: title, operation: operation,
                                items: paths.map { JobItemStatus(inputPath: $0) })
         jobs.insert(record, at: 0)
         executors[record.id] = executor
+        if let onComplete { completions[record.id] = onComplete }
         cancelTokens[record.id] = CancellationFlag()
         if canUndo { undoRequested.insert(record.id) }
         workQueue.append(record.id)
@@ -143,8 +147,9 @@ final class JobManager: ObservableObject {
             jobs[index].progressDetail = "Completed"
         }
 
-        let canProtect = undoRequested.remove(jobId) != nil
+        let canProtect = undoRequested.contains(jobId)
             && !outputs.isEmpty && !wasCancelled && error == nil
+        if canProtect { undoRequested.remove(jobId) }
         cancelTokens.removeValue(forKey: jobId)
         activeJobIDs.remove(jobId)
         if jobs[index].status == .completed {
@@ -153,6 +158,7 @@ final class JobManager: ObservableObject {
         }
         persistHistory()
         if canProtect { fingerprintOutputs(jobId: jobId, paths: outputs.map(\.path)) }
+        completions.removeValue(forKey: jobId)?(jobs[index])
         drainQueue()
     }
 
@@ -181,6 +187,7 @@ final class JobManager: ObservableObject {
             jobs[index].finishedAt = Date()
             jobs[index].progressDetail = "Cancelled before starting"
             executors.removeValue(forKey: jobId)
+            completions.removeValue(forKey: jobId)
             cancelTokens.removeValue(forKey: jobId)
             undoRequested.remove(jobId)
             persistHistory()
