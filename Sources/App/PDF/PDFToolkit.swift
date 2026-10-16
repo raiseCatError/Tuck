@@ -28,6 +28,14 @@ public enum PDFMergeError: LocalizedError, Sendable {
     }
 }
 
+/// An error after some PDF pages have already been published. The caller must
+/// keep these outputs in Activity and offer safe cleanup/Undo.
+public struct PartialPDFSplitError: LocalizedError, Sendable {
+    public let outputs: [URL]
+    public let failureDescription: String
+    public var errorDescription: String? { failureDescription }
+}
+
 public enum PDFToolkit {
 
     /// Merges an array of file URLs (PDFs and images) into a single combined multipage PDF.
@@ -196,7 +204,9 @@ public enum PDFToolkit {
         return pages.sorted()
     }
 
-    /// Splits a PDF by page ranges or into individual pages.
+    /// Splits a PDF by page ranges or into individual pages. If a user
+    /// cancels after some pages are published, return those paths so the Job
+    /// Manager can record them rather than leaving invisible output files.
     public static func split(url: URL,
                              rangeDescription: String,
                              progress: @Sendable @escaping (Double, String) -> Void = { _, _ in },
@@ -212,43 +222,45 @@ public enum PDFToolkit {
 
         let trimmed = rangeDescription.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         var outputs: [URL] = []
-
-        if trimmed == "each" || trimmed == "single" {
-            // Split every page into separate file
-            for i in 0..<total {
-                if shouldCancel() { throw CancellationError() }
-                progress(Double(i) / Double(total), "Splitting page \(i + 1) of \(total)…")
-                guard let page = doc.page(at: i) else { continue }
-                let singleDoc = PDFDocument()
-                singleDoc.insert(page, at: 0)
-                let temp = url.deletingLastPathComponent().appendingPathComponent(".tuck-split-\(UUID().uuidString).pdf")
-                defer { try? FileManager.default.removeItem(at: temp) }
-                if singleDoc.write(to: temp) {
-                    let pub = try OutputName.publish(temp, beside: url, suffix: "-page-\(i + 1)", extraExtension: "pdf")
-                    outputs.append(pub)
+        do {
+            if trimmed == "each" || trimmed == "single" {
+                for i in 0..<total {
+                    if shouldCancel() { return outputs }
+                    progress(Double(i) / Double(total), "Splitting page \(i + 1) of \(total)…")
+                    guard let page = doc.page(at: i) else { continue }
+                    let single = PDFDocument()
+                    single.insert(page, at: 0)
+                    let temp = url.deletingLastPathComponent()
+                        .appendingPathComponent(".tuck-split-\(UUID().uuidString).pdf")
+                    defer { try? FileManager.default.removeItem(at: temp) }
+                    guard single.write(to: temp) else { throw PDFMergeError.writeFailed }
+                    outputs.append(try OutputName.publish(
+                        temp, beside: url, suffix: "-page-\(i + 1)", extraExtension: "pdf"))
                 }
-            }
-        } else {
-            // Split by specific ranges, e.g. "1-3,5"
-            let indices = parsePageRanges(rangeDescription, pageCount: total)
-            guard !indices.isEmpty else {
-                throw PDFMergeError.unreadableFile("No valid pages found in range: \(rangeDescription)")
-            }
-            let extractDoc = PDFDocument()
-            for (newIdx, pageIdx) in indices.enumerated() {
-                if shouldCancel() { throw CancellationError() }
-                guard let page = doc.page(at: pageIdx) else { continue }
-                extractDoc.insert(page, at: newIdx)
-            }
-            let temp = url.deletingLastPathComponent().appendingPathComponent(".tuck-split-\(UUID().uuidString).pdf")
-            defer { try? FileManager.default.removeItem(at: temp) }
-            if extractDoc.write(to: temp) {
+            } else {
+                let indices = parsePageRanges(rangeDescription, pageCount: total)
+                guard !indices.isEmpty else {
+                    throw PDFMergeError.unreadableFile("No valid pages found in range: \(rangeDescription)")
+                }
+                let extracted = PDFDocument()
+                for (newIndex, pageIndex) in indices.enumerated() {
+                    if shouldCancel() { return outputs }
+                    guard let page = doc.page(at: pageIndex) else { continue }
+                    extracted.insert(page, at: newIndex)
+                }
+                let temp = url.deletingLastPathComponent()
+                    .appendingPathComponent(".tuck-split-\(UUID().uuidString).pdf")
+                defer { try? FileManager.default.removeItem(at: temp) }
+                guard extracted.write(to: temp) else { throw PDFMergeError.writeFailed }
                 let suffix = "-pages-\(rangeDescription.replacingOccurrences(of: " ", with: ""))"
-                let pub = try OutputName.publish(temp, beside: url, suffix: suffix, extraExtension: "pdf")
-                outputs.append(pub)
+                outputs.append(try OutputName.publish(
+                    temp, beside: url, suffix: suffix, extraExtension: "pdf"))
             }
+            return outputs
+        } catch {
+            if outputs.isEmpty { throw error }
+            throw PartialPDFSplitError(outputs: outputs, failureDescription: error.localizedDescription)
         }
-        return outputs
     }
 
     /// Rotates pages in a PDF document by 90, 180, or 270 degrees.
