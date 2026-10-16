@@ -7,6 +7,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     case activity = "Activity"
     case destinations = "Destinations"
     case automation = "Automation"
+    case recipes = "Recipes"
     case applications = "Applications"
     case general = "General"
     var id: Self { self }
@@ -17,6 +18,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .activity: "clock.arrow.circlepath"
         case .destinations: "folder.badge.gearshape"
         case .automation: "bolt.badge.clock"
+        case .recipes: "square.stack.3d.up"
         case .applications: "terminal"
         case .general: "gearshape"
         }
@@ -51,6 +53,7 @@ struct SettingsView: View {
                     case .activity: activityPane
                     case .destinations: FavoriteSettingsView()
                     case .automation: CustomActionsSettingsView()
+                    case .recipes: RecipeSettingsView()
                     case .applications: applicationsPane
                     case .general: generalPane
                     }
@@ -186,6 +189,8 @@ struct SettingsView: View {
             Button(action.title) { lastPreview = "Browse or extract ZIP entries" }
         case .customActions:
             Button(action.title) { lastPreview = "Run a user-configured action (confirmation required)" }
+        case .recipes:
+            Button(action.title) { lastPreview = "Run a saved non-destructive image pipeline" }
         }
     }
 
