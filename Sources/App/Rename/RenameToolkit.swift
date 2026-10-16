@@ -13,7 +13,7 @@ public enum CopyAsToolkit {
         var shared = first.standardizedFileURL.deletingLastPathComponent().pathComponents
         for url in urls.dropFirst() {
             let parts = url.standardizedFileURL.deletingLastPathComponent().pathComponents
-            shared = Array(zip(shared, parts).prefix(while: { $0 == $1 }).map(\.0))
+            shared = Array(zip(shared, parts).prefix(while: { $0.0 == $0.1 }).map(\.0))
         }
         // "/" isn't a meaningful base when items live on unrelated volumes.
         return shared.count > 1 ? shared : nil
