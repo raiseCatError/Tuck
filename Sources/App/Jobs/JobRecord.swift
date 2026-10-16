@@ -38,6 +38,9 @@ public struct JobRecord: Identifiable, Codable, Sendable {
     public var outputs: [String]
     public var canUndo: Bool
     public var isUndone: Bool
+    /// Present only after the generated outputs have been fingerprinted.
+    /// Older history entries lack this field and must never be deleted by Undo.
+    public var outputProofs: [OutputIdentity]?
 
     public init(id: UUID = UUID(),
                 title: String,
@@ -51,7 +54,8 @@ public struct JobRecord: Identifiable, Codable, Sendable {
                 items: [JobItemStatus] = [],
                 outputs: [String] = [],
                 canUndo: Bool = false,
-                isUndone: Bool = false) {
+                isUndone: Bool = false,
+                outputProofs: [OutputIdentity]? = nil) {
         self.id = id
         self.title = title
         self.operation = operation
@@ -65,5 +69,6 @@ public struct JobRecord: Identifiable, Codable, Sendable {
         self.outputs = outputs
         self.canUndo = canUndo
         self.isUndone = isUndone
+        self.outputProofs = outputProofs
     }
 }
