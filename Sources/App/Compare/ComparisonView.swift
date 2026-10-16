@@ -121,7 +121,7 @@ private struct ComparisonView: View {
                     }
                 }
             }
-            if pdf && (sourcePDF?.pageCount != outputPDF?.pageCount) {
+            if pdf && beforePages != afterPages {
                 Label("The two PDFs have different page counts. Check structure and text separately.",
                       systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.orange)
