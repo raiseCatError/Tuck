@@ -48,6 +48,10 @@ final class TuckFinderSync: FIFinderSync {
 
         // Rename tags
         static let renameBatch = 800
+        static let copyFavorite = 900
+        static let moveFavorite = 950
+        static let chooseCopy = 990
+        static let chooseMove = 991
     }
 
     private var menuSelection: [URL]?
@@ -147,11 +151,40 @@ final class TuckFinderSync: FIFinderSync {
                 item.submenu = makeCopyAsMenu()
             case .rename:
                 item.action = #selector(advancedRename(_:))
+            case .destinations:
+                item.submenu = makeDestinationMenu()
             }
             root.addItem(item)
         }
         TuckLog.extensionLogger.info("extension.menu kind=\(kind.rawValue) context=\(context.rawValue, privacy: .public) selection=\(selection.count) target=\(target != nil, privacy: .public) actions=\(entries.count)")
         return root.items.isEmpty ? nil : root
+    }
+
+    private func makeDestinationMenu() -> NSMenu {
+        let root = NSMenu(title: "Copy / Move To")
+        let copy = NSMenu(title: "Copy To")
+        let move = NSMenu(title: "Move To")
+        for favorite in FavoritePreferences.all {
+            let a = copy.addItem(withTitle: favorite.title, action: #selector(destinationAction(_:)), keyEquivalent: "")
+            a.tag = Tag.copyFavorite
+            a.representedObject = favorite.id.uuidString
+            let b = move.addItem(withTitle: favorite.title, action: #selector(destinationAction(_:)), keyEquivalent: "")
+            b.tag = Tag.moveFavorite
+            b.representedObject = favorite.id.uuidString
+        }
+        if !FavoritePreferences.all.isEmpty {
+            copy.addItem(.separator())
+            move.addItem(.separator())
+        }
+        let chooseCopy = copy.addItem(withTitle: "Choose Folder…", action: #selector(destinationAction(_:)), keyEquivalent: "")
+        chooseCopy.tag = Tag.chooseCopy
+        let chooseMove = move.addItem(withTitle: "Choose Folder…", action: #selector(destinationAction(_:)), keyEquivalent: "")
+        chooseMove.tag = Tag.chooseMove
+        let ci = root.addItem(withTitle: "Copy To", action: nil, keyEquivalent: "")
+        ci.submenu = copy
+        let mi = root.addItem(withTitle: "Move To", action: nil, keyEquivalent: "")
+        mi.submenu = move
+        return root
     }
 
     private func makeFileMenu() -> NSMenu {
@@ -450,6 +483,18 @@ final class TuckFinderSync: FIFinderSync {
         let paths = selection.map(\.path)
         guard !paths.isEmpty else { return }
         dispatch("advancedRename", paths: paths)
+    }
+
+    @objc func destinationAction(_ sender: NSMenuItem) {
+        let (selection, _) = resolveContext()
+        guard !selection.isEmpty else { return }
+        let copy = sender.tag == Tag.copyFavorite || sender.tag == Tag.chooseCopy
+        let move = sender.tag == Tag.moveFavorite || sender.tag == Tag.chooseMove
+        guard copy || move else { return }
+        let favorite = (sender.tag == Tag.chooseCopy || sender.tag == Tag.chooseMove)
+            ? "choose" : (sender.representedObject as? String)
+        guard let favorite else { return }
+        dispatch(copy ? "copyTo" : "moveTo", paths: selection.map(\.path), argument: favorite)
     }
 
     private func dispatch(_ operation: String, paths: [String], argument: String? = nil) {
