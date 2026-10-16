@@ -37,6 +37,14 @@ Fully quit any previously launched Tuck, relaunch `~/Applications/Tuck.app`, and
 | Generated-file Undo | User-modified outputs must be **refused**, not trashed; unmodified generated copies may be moved to Trash |
 | Activity | Status, failure, output reveal, undo state and history after app restart are accurate |
 | Settings panes | Menu/Compression/Activity/Applications/General headings visible after resize, scroll and sidebar changes |
+| Compare | Compress a single image and PDF; open Activity → Compare; check slider/side-by-side, zoom, PDF page controls and missing-file fallback |
+| ZIP inspector | Inspect a normal ZIP, select one entry, extract to a fresh folder and verify only the selection; reject encrypted/traversal/option-like/wildcard entries |
+| Duplicate finder | Scan a disposable folder with same-content/different-name files, different-content/same-size files and symlinks; verify exact grouping, selected-only Trash, refusal after modification and retention of one copy |
+| Favourite destinations | Add/remove/bookmark a folder; Copy To and Move To (confirmed) from Finder; test collision, disconnected drive, source hash and cross-volume move |
+| Custom actions | Configure a disposable executable and Shortcut; confirm before execution; pass path with spaces, quotes, Unicode and leading dash as one argv entry; refuse missing/disabled executable |
+| Saved image recipes | Save/edit/reorder a resize→convert→strip chain; process multiple images; inspect export copies, failures, cancellation and source hashes |
+| Watched folders | Add a rule, write a file slowly, confirm exactly one run when stable; test rename storms, disabled/global pause, rule removal, recipe deletion, app restart and external-drive unmount |
+| Accessibility | Test all Settings panes, ZIP/duplicate selection toggles and job progress with keyboard-only navigation and VoiceOver |
 
 ### Isolation, correctness and failure tests
 
