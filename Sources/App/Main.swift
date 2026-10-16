@@ -178,124 +178,68 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
 
     // MARK: - Compression
 
-    /// Runs size reduction off the main thread with a cancellable progress
-    /// window, then reports exactly what happened before revealing the results.
-    private func runCompression(paths: [String], target: CompressionTarget, operation: String) {
-        guard !paths.isEmpty else {
-            TuckLog.helperLogger.error("helper.handle-aborted op=\(operation, privacy: .public) reason=no-path")
-            return
-        }
-        let cancelled = CancellationFlag()
-        let progress = ProgressWindow()
-        progress.present(title: "Compressing to under \(target.description)", onCancel: { cancelled.cancel() })
-        let reporter: @Sendable (CompressionProgress) -> Void = { update in
-            Task { @MainActor in
-                progress.update(fraction: update.fraction,
-                                detail: update.fileName.isEmpty ? update.note : "\(update.fileName): \(update.note)")
+    // A single path for long-running file jobs: bounded queue, visible progress,
+    // cooperative cancellation and a completion message only after the worker exits.
+    private func queueOperation(title: String, operation: String, paths: [String],
+                                canUndo: Bool = true,
+                                worker: @escaping JobManager.Executor) {
+        guard !paths.isEmpty else { return }
+        let window = ProgressWindow()
+        let jobId = JobManager.shared.enqueue(
+            title: title, operation: operation, paths: paths, canUndo: canUndo,
+            onComplete: { [weak self] job in
+                window.dismiss()
+                switch job.status {
+                case .completed:
+                    self?.report("Created \(job.outputs.count) output file(s). Open Settings → Activity to review results.", title: title)
+                case .failed:
+                    self?.report(job.progressDetail, title: "\(title) failed")
+                case .cancelled:
+                    if !job.outputs.isEmpty {
+                        self?.report("Cancelled after publishing some results. Review Activity before retrying.", title: title)
+                    }
+                case .queued, .running: break
+                }
+            },
+            executor: { token, progress in
+                try await worker(token, { fraction, detail in
+                    progress(fraction, detail)
+                    Task { @MainActor in window.update(fraction: fraction, detail: detail) }
+                })
             }
-        }
-        let shouldCancel: @Sendable () -> Bool = { cancelled.isCancelled }
-
-        Task.detached(priority: .userInitiated) { [weak self] in
-            let outcome = CompressionEngine.compress(paths: paths, target: target,
-                                                     progress: reporter, shouldCancel: shouldCancel)
-            await MainActor.run {
-                self?.finishCompression(outcome: outcome, target: target, operation: operation,
-                                        progress: progress, cancelled: cancelled)
-            }
-        }
+        )
+        window.present(title: title, onCancel: { JobManager.shared.cancel(jobId: jobId) })
     }
 
-    private func finishCompression(outcome: CompressionEngine.Outcome, target: CompressionTarget,
-                                   operation: String, progress: ProgressWindow, cancelled: CancellationFlag) {
-        progress.dismiss()
-        if cancelled.isCancelled {
-            TuckLog.compressionLogger.info("helper.result op=\(operation, privacy: .public) outcome=cancelled")
-            report("Compression cancelled. No output was published.")
-            return
+    private func runCompression(paths: [String], target: CompressionTarget, operation: String) {
+        queueOperation(title: "Compress under \(target.description)", operation: operation, paths: paths) { token, progress in
+            let outcome = CompressionEngine.compress(
+                paths: paths, target: target,
+                progress: { update in
+                    progress(update.fraction, update.fileName.isEmpty ? update.note : "\(update.fileName): \(update.note)")
+                },
+                shouldCancel: { token.isCancelled }
+            )
+            if token.isCancelled { throw CancellationError() }
+            let outputs = outcome.results.compactMap(\.output)
+            if outputs.isEmpty {
+                let details = outcome.failures.map { "\($0.0.lastPathComponent): \($0.1.description)" }
+                throw UndoError.unsafe(details.isEmpty ? "Nothing was compressed." : details.joined(separator: "\n"))
+            }
+            if !outcome.failures.isEmpty {
+                progress(1, "Completed \(outputs.count) with \(outcome.failures.count) failed input(s).")
+            }
+            return outputs
         }
-        let outputs = outcome.results.compactMap(\.output)
-        if !outputs.isEmpty {
-            NSWorkspace.shared.activateFileViewerSelecting(outputs)
-        }
-        var lines: [String] = []
-        for result in outcome.results {
-            let megabytes = String(format: "%.2f", Double(result.resultBytes) / 1_000_000)
-            let original = String(format: "%.2f", Double(result.originalBytes) / 1_000_000)
-            let saved = String(format: "%.1f", result.reductionPercent)
-            let within = result.resultBytes < target.maxBytes ? "under \(target.description)" : "OVER the limit"
-            var line = "\(result.source.lastPathComponent): \(original) MB → \(megabytes) MB (\(saved)% smaller, \(within))"
-            if result.alreadyWithinLimit { line += "\nAlready met the limit, so a lossless copy was made." }
-            line += "\n\(result.output?.lastPathComponent ?? "")"
-            lines.append(line)
-        }
-        for (url, failure) in outcome.failures {
-            lines.append("\(url.lastPathComponent): \(failure.description)")
-        }
-        if lines.isEmpty {
-            TuckLog.helperLogger.error("helper.result op=\(operation, privacy: .public) outcome=no-output")
-            report("Nothing could be compressed.")
-            return
-        }
-        let items = outcome.results.map {
-            JobItemStatus(inputPath: $0.source.path, outputPath: $0.output?.path, status: .completed)
-        }
-        let record = JobRecord(
-            title: "Compress to < \(target.description)",
-            operation: operation,
-            finishedAt: Date(),
-            status: outputs.isEmpty ? .failed : .completed,
-            progress: 1.0,
-            progressDetail: outputs.isEmpty ? "Failed" : "Compressed \(outputs.count) file(s)",
-            items: items,
-            outputs: outputs.map(\.path),
-            canUndo: !outputs.isEmpty
-        )
-        JobManager.shared.recordCompletedJob(record)
-
-        TuckLog.compressionLogger.info("helper.result op=\(operation, privacy: .public) outputs=\(outputs.count) failures=\(outcome.failures.count)")
-        report(lines.joined(separator: "\n\n"), title: outputs.isEmpty ? "Compression failed" : "Compression finished")
     }
 
     private func runZip(paths: [String]) {
-        guard !paths.isEmpty else {
-            TuckLog.helperLogger.error("helper.handle-aborted op=zip reason=no-path")
-            return
-        }
-        let cancelled = CancellationFlag()
-        let progress = ProgressWindow()
-        progress.present(title: "Creating ZIP archive", onCancel: { cancelled.cancel() })
-        Task.detached(priority: .userInitiated) { [weak self] in
-            do {
-                let result = try FileWork.zip(paths, progress: { fraction in
-                    Task { @MainActor in progress.update(fraction: fraction, detail: "") }
-                }, shouldCancel: { cancelled.isCancelled })
-                await MainActor.run {
-                    progress.dismiss()
-                    let record = JobRecord(
-                        title: "Create ZIP archive",
-                        operation: "zip",
-                        finishedAt: Date(),
-                        status: .completed,
-                        progress: 1.0,
-                        progressDetail: "Created \(result.file.lastPathComponent)",
-                        items: paths.map { JobItemStatus(inputPath: $0) },
-                        outputs: [result.file.path],
-                        canUndo: true
-                    )
-                    JobManager.shared.recordCompletedJob(record)
-
-                    NSWorkspace.shared.activateFileViewerSelecting([result.file])
-                    let megabytes = String(format: "%.2f", Double(ImageFacts.byteSize(result.file)) / 1_000_000)
-                    self?.report("\(result.file.lastPathComponent)\n\(megabytes) MB using \(result.strategy).", title: "Archive ready")
-                }
-            } catch {
-                await MainActor.run {
-                    progress.dismiss()
-                    TuckLog.compressionLogger.error("helper.result op=zip outcome=failed detail=\(error.localizedDescription, privacy: .private)")
-                    self?.report(Self.describe(error), title: "Archive failed")
-                }
-            }
+        queueOperation(title: "Create ZIP archive", operation: "zip", paths: paths) { token, progress in
+            let result = try FileWork.zip(paths, progress: { fraction in
+                progress(fraction, "Creating archive…")
+            }, shouldCancel: { token.isCancelled })
+            if token.isCancelled { throw CancellationError() }
+            return [result.file]
         }
     }
 
