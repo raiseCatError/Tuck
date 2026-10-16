@@ -37,6 +37,15 @@ struct WatchedFolderTests {
                                 now: now.addingTimeInterval(2))
         assert(later.ready == [file] && !later.retry)
 
+        let renamed = "/tmp/incoming/renamed.png"
+        let renameEvent = Gate.decide(known: ready.known,
+                                      first: [renamed: complete],
+                                      second: [renamed: complete], now: now)
+        assert(renameEvent.ready.isEmpty,
+               "Renaming an already observed file must not enqueue another recipe.")
+        assert(renameEvent.known[renamed] == complete)
+        assert(!renameEvent.retry)
+
         let vanished = Gate.decide(known: ready.known, first: [:], second: [:], now: now)
         assert(vanished.ready.isEmpty && vanished.known.isEmpty && !vanished.retry)
         print("WatchedFolderTests passed")
