@@ -272,7 +272,19 @@ struct SettingsView: View {
                             Text(job.progressDetail)
                                 .font(.caption).foregroundStyle(.secondary)
                                 .textSelection(.enabled)
-                            if job.status == .completed && job.canUndo == false
+                            if let failures = job.failures, !failures.isEmpty {
+                                DisclosureGroup("Failed inputs (\(failures.count))") {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        ForEach(failures.indices, id: \.self) { index in
+                                            Text("\(URL(fileURLWithPath: failures[index].inputPath).lastPathComponent): \(failures[index].reason)")
+                                                .font(.caption)
+                                                .textSelection(.enabled)
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                            if (job.status == .completed || job.status == .partial) && job.canUndo == false
                                 && !job.outputs.isEmpty && !job.isUndone {
                                 Text("Undo unavailable until the output is verified, or for unsupported files.")
                                     .font(.caption2).foregroundStyle(.secondary)
@@ -324,6 +336,7 @@ struct SettingsView: View {
         case .queued: return .orange
         case .running: return .blue
         case .completed: return .green
+        case .partial: return .orange
         case .failed: return .red
         case .cancelled: return .secondary
         }

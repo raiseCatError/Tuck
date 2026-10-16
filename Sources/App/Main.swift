@@ -194,6 +194,8 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
                 switch job.status {
                 case .completed:
                     self?.report("Created \(job.outputs.count) output file(s). Open Settings → Activity to review results.", title: title)
+                case .partial:
+                    self?.report(job.progressDetail + "\nSee Activity for the failed filenames and reasons.", title: "\(title) partially completed")
                 case .failed:
                     self?.report(job.progressDetail, title: "\(title) failed")
                 case .cancelled:
@@ -224,14 +226,13 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             )
             let outputs = outcome.results.compactMap(\.output)
             if token.isCancelled && outputs.isEmpty { throw CancellationError() }
-            if outputs.isEmpty {
-                let details = outcome.failures.map { "\($0.0.lastPathComponent): \($0.1.description)" }
-                throw UndoError.unsafe(details.isEmpty ? "Nothing was compressed." : details.joined(separator: "\n"))
+            var failures = outcome.failures.map {
+                JobFailure(inputPath: $0.0.path, reason: $0.1.description)
             }
-            if !outcome.failures.isEmpty {
-                progress(1, "Completed \(outputs.count) with \(outcome.failures.count) failed input(s).")
+            if outputs.isEmpty && failures.isEmpty {
+                failures.append(JobFailure(inputPath: paths[0], reason: "No output was created."))
             }
-            return outputs
+            return JobOutcome(outputs: outputs, failures: failures)
         }
     }
 
@@ -241,7 +242,7 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
                 progress(fraction, "Creating archive…")
             }, shouldCancel: { token.isCancelled })
             // The archive may already have been published when cancellation arrives.
-            return [result.file]
+            return JobOutcome(outputs: [result.file])
         }
     }
 
@@ -345,7 +346,7 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         let urls = paths.map { URL(fileURLWithPath: $0) }
         queueOperation(title: "Merge into PDF", operation: "pdfMerge", paths: paths) { token, progress in
             let merged = try PDFToolkit.merge(urls: urls, progress: progress, shouldCancel: { token.isCancelled })
-            return [merged]
+            return JobOutcome(outputs: [merged])
         }
     }
 
@@ -371,71 +372,93 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             let outputs = try PDFToolkit.split(url: url, rangeDescription: selectedRange,
                                                progress: progress, shouldCancel: { token.isCancelled })
             if token.isCancelled && outputs.isEmpty { throw CancellationError() }
-            return outputs
+            guard !outputs.isEmpty else { throw UndoError.unsafe("No PDF pages were extracted.") }
+            return JobOutcome(outputs: outputs)
         }
     }
 
     private func runPDFRotate(paths: [String], degrees: Int) {
         queueOperation(title: "Rotate PDF pages", operation: "pdfRotate", paths: paths) { token, progress in
             var outputs: [URL] = []
+            var failures: [JobFailure] = []
             for (index, path) in paths.enumerated() {
                 if token.isCancelled { break }
                 progress(Double(index) / Double(paths.count), URL(fileURLWithPath: path).lastPathComponent)
-                if let output = try? PDFToolkit.rotate(url: URL(fileURLWithPath: path), degrees: degrees) {
-                    outputs.append(output)
+                do {
+                    outputs.append(try PDFToolkit.rotate(url: URL(fileURLWithPath: path), degrees: degrees))
+                } catch {
+                    failures.append(JobFailure(inputPath: path, reason: error.localizedDescription))
                 }
             }
-            guard !outputs.isEmpty else { throw UndoError.unsafe("No PDF pages could be rotated.") }
-            return outputs
+            return JobOutcome(outputs: outputs, failures: failures)
         }
     }
 
     private func runPDFOCR(paths: [String]) {
         queueOperation(title: "Recognize PDF text", operation: "pdfOCR", paths: paths) { token, progress in
             var outputs: [URL] = []
+            var failures: [JobFailure] = []
             for (index, path) in paths.enumerated() {
                 if token.isCancelled { break }
                 let start = Double(index) / Double(paths.count)
                 let source = URL(fileURLWithPath: path)
-                if let output = try? PDFToolkit.ocr(url: source, progress: { fraction, note in
-                    progress(start + fraction / Double(paths.count), note)
-                }, shouldCancel: { token.isCancelled }) {
+                do {
+                    let output = try PDFToolkit.ocr(url: source, progress: { fraction, note in
+                        progress(start + fraction / Double(paths.count), note)
+                    }, shouldCancel: { token.isCancelled })
                     outputs.append(output)
+                } catch {
+                    if !token.isCancelled {
+                        failures.append(JobFailure(inputPath: path, reason: error.localizedDescription))
+                    }
                 }
             }
             if token.isCancelled && outputs.isEmpty { throw CancellationError() }
-            guard !outputs.isEmpty else { throw UndoError.unsafe("No searchable PDFs could be generated.") }
-            return outputs
+            return JobOutcome(outputs: outputs, failures: failures)
         }
     }
 
     private func runPDFExtractImages(paths: [String]) {
         queueOperation(title: "Extract PDF images", operation: "pdfExtractImages", paths: paths) { token, progress in
             var outputs: [URL] = []
+            var failures: [JobFailure] = []
             for (index, path) in paths.enumerated() {
                 if token.isCancelled { break }
                 progress(Double(index) / Double(paths.count), URL(fileURLWithPath: path).lastPathComponent)
-                if let files = try? PDFToolkit.extractImages(url: URL(fileURLWithPath: path)) {
-                    outputs.append(contentsOf: files)
+                do {
+                    let files = try PDFToolkit.extractImages(url: URL(fileURLWithPath: path))
+                    if files.isEmpty {
+                        failures.append(JobFailure(inputPath: path, reason: "No embedded raster assets found."))
+                    } else {
+                        outputs.append(contentsOf: files)
+                    }
+                } catch {
+                    failures.append(JobFailure(inputPath: path, reason: error.localizedDescription))
                 }
             }
-            guard !outputs.isEmpty else { throw UndoError.unsafe("No embedded images could be extracted.") }
-            return outputs
+            return JobOutcome(outputs: outputs, failures: failures)
         }
     }
 
     private func runPDFToImages(paths: [String]) {
         queueOperation(title: "Export PDF pages as images", operation: "pdfToImages", paths: paths) { token, progress in
             var outputs: [URL] = []
+            var failures: [JobFailure] = []
             for (index, path) in paths.enumerated() {
                 if token.isCancelled { break }
                 progress(Double(index) / Double(paths.count), URL(fileURLWithPath: path).lastPathComponent)
-                if let files = try? PDFToolkit.renderPagesToImages(url: URL(fileURLWithPath: path)) {
-                    outputs.append(contentsOf: files)
+                do {
+                    let files = try PDFToolkit.renderPagesToImages(url: URL(fileURLWithPath: path))
+                    if files.isEmpty {
+                        failures.append(JobFailure(inputPath: path, reason: "No pages could be rendered."))
+                    } else {
+                        outputs.append(contentsOf: files)
+                    }
+                } catch {
+                    failures.append(JobFailure(inputPath: path, reason: error.localizedDescription))
                 }
             }
-            guard !outputs.isEmpty else { throw UndoError.unsafe("No pages could be rendered.") }
-            return outputs
+            return JobOutcome(outputs: outputs, failures: failures)
         }
     }
 
@@ -444,20 +467,24 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
     private func runImageConvert(paths: [String], targetFormat: String) {
         queueOperation(title: "Convert images to \(targetFormat.uppercased())", operation: "imageConvert", paths: paths) { token, progress in
             var outputs: [URL] = []
+            var failures: [JobFailure] = []
             for (index, path) in paths.enumerated() {
                 if token.isCancelled { break }
                 let url = URL(fileURLWithPath: path)
                 progress(Double(index) / Double(paths.count), url.lastPathComponent)
-                if let output = try? ImageToolkit.convert(
-                    url: url, targetFormat: targetFormat,
-                    progress: { fraction, detail in
-                        progress((Double(index) + fraction) / Double(paths.count), detail)
-                    }, shouldCancel: { token.isCancelled }) {
-                    outputs.append(output)
+                do {
+                    outputs.append(try ImageToolkit.convert(
+                        url: url, targetFormat: targetFormat,
+                        progress: { fraction, detail in
+                            progress((Double(index) + fraction) / Double(paths.count), detail)
+                        }, shouldCancel: { token.isCancelled }))
+                } catch {
+                    if !token.isCancelled {
+                        failures.append(JobFailure(inputPath: path, reason: error.localizedDescription))
+                    }
                 }
             }
-            guard !outputs.isEmpty else { throw UndoError.unsafe("No images could be converted.") }
-            return outputs
+            return JobOutcome(outputs: outputs, failures: failures)
         }
     }
 
@@ -476,20 +503,24 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         }
         queueOperation(title: "Resize images", operation: "imageResize", paths: paths) { token, progress in
             var outputs: [URL] = []
+            var failures: [JobFailure] = []
             for (index, path) in paths.enumerated() {
                 if token.isCancelled { break }
                 let url = URL(fileURLWithPath: path)
                 progress(Double(index) / Double(paths.count), url.lastPathComponent)
-                if let output = try? ImageToolkit.resize(
-                    url: url, mode: mode,
-                    progress: { fraction, detail in
-                        progress((Double(index) + fraction) / Double(paths.count), detail)
-                    }, shouldCancel: { token.isCancelled }) {
-                    outputs.append(output)
+                do {
+                    outputs.append(try ImageToolkit.resize(
+                        url: url, mode: mode,
+                        progress: { fraction, detail in
+                            progress((Double(index) + fraction) / Double(paths.count), detail)
+                        }, shouldCancel: { token.isCancelled }))
+                } catch {
+                    if !token.isCancelled {
+                        failures.append(JobFailure(inputPath: path, reason: error.localizedDescription))
+                    }
                 }
             }
-            guard !outputs.isEmpty else { throw UndoError.unsafe("No images could be resized.") }
-            return outputs
+            return JobOutcome(outputs: outputs, failures: failures)
         }
     }
 
@@ -504,14 +535,18 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
     private func runMetadataStrip(paths: [String]) {
         queueOperation(title: "Strip file metadata", operation: "metaStrip", paths: paths) { token, progress in
             var outputs: [URL] = []
+            var failures: [JobFailure] = []
             for (index, path) in paths.enumerated() {
                 if token.isCancelled { break }
                 let url = URL(fileURLWithPath: path)
                 progress(Double(index) / Double(paths.count), url.lastPathComponent)
-                if let output = try? MetadataToolkit.strip(url: url) { outputs.append(output) }
+                do {
+                    outputs.append(try MetadataToolkit.strip(url: url))
+                } catch {
+                    failures.append(JobFailure(inputPath: path, reason: error.localizedDescription))
+                }
             }
-            guard !outputs.isEmpty else { throw UndoError.unsafe("No metadata-cleaned copies could be created.") }
-            return outputs
+            return JobOutcome(outputs: outputs, failures: failures)
         }
     }
 
@@ -584,7 +619,7 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             progress(0.05, "Applying reviewed filename changes…")
             let outputs = try AdvancedRenameToolkit.execute(plan: plan)
             progress(1, "Rename complete")
-            return outputs
+            return JobOutcome(outputs: outputs)
         }
     }
 

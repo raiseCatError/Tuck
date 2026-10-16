@@ -47,7 +47,7 @@ struct JobManagerTests {
                 progress(0.5, "Working")
                 try await Task.sleep(nanoseconds: 100_000_000)
                 if token.isCancelled { throw CancellationError() }
-                return []
+                return JobOutcome()
             }
             ids.append(id)
         }
@@ -73,7 +73,7 @@ struct JobManagerTests {
         let partialId = manager.enqueue(title: "Partial", operation: "imageConvert",
                                         paths: ["/tmp/input"], canUndo: true) { token, progress in
             try await Task.sleep(nanoseconds: 60_000_000)
-            return [partial]
+            return JobOutcome(outputs: [partial])
         }
         manager.cancel(jobId: partialId)
         for _ in 0..<100 {
@@ -87,6 +87,34 @@ struct JobManagerTests {
         assert(cancelled.status == .cancelled)
         assert(cancelled.outputs == [partial.path])
         assert(cancelled.canUndo && cancelled.outputProofs?.count == 1)
+
+        // A batch may succeed for one input and fail for another. Do not
+        // label it fully completed, and preserve the successful generated copy.
+        let succeeded = dir.appendingPathComponent("succeeded.jpg")
+        try Data("generated output".utf8).write(to: succeeded)
+        let good = dir.appendingPathComponent("good.jpg").path
+        let bad = dir.appendingPathComponent("bad.jpg").path
+        let mixedId = manager.enqueue(title: "Mixed", operation: "imageConvert",
+                                      paths: [good, bad], canUndo: true) { _, _ in
+            JobOutcome(outputs: [succeeded],
+                       failures: [JobFailure(inputPath: bad, reason: "Unsupported test format")])
+        }
+        for _ in 0..<100 {
+            if let record = manager.jobs.first(where: { $0.id == mixedId }),
+               record.status == .partial && record.outputProofs != nil { break }
+            try await Task.sleep(nanoseconds: 30_000_000)
+        }
+        guard let mixed = manager.jobs.first(where: { $0.id == mixedId }) else {
+            fatalError("Mixed batch missing from history")
+        }
+        assert(mixed.status == .partial)
+        assert(mixed.outputs == [succeeded.path])
+        assert(mixed.failures?.first?.inputPath == bad)
+        assert(mixed.items.first(where: { $0.inputPath == bad })?.status == .failed)
+        assert(mixed.canUndo && mixed.outputProofs?.count == 1)
+        let encoded = try JSONEncoder().encode(mixed)
+        let decoded = try JSONDecoder().decode(JobRecord.self, from: encoded)
+        assert(decoded.status == .partial && decoded.failures?.count == 1)
 
         // Restarting Tuck must not show orphaned 'Running' forever.
         let interrupted = JobRecord(title: "Interrupted", operation: "test",

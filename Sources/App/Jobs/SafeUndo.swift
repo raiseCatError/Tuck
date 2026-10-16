@@ -70,7 +70,7 @@ public enum UndoError: LocalizedError {
 /// fallback that deletes files from old, unverified history entries.
 enum ProtectedUndo {
     static func validatedProofs(for job: JobRecord) throws -> [OutputIdentity] {
-        guard job.canUndo, !job.isUndone, job.status == .completed || job.status == .failed || job.status == .cancelled else {
+        guard job.canUndo, !job.isUndone, job.status == .completed || job.status == .partial || job.status == .failed || job.status == .cancelled else {
             throw UndoError.unsafe("This operation is not eligible for undo.")
         }
         guard let proofs = job.outputProofs, !proofs.isEmpty,
