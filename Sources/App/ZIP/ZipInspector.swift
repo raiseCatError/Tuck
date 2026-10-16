@@ -134,7 +134,11 @@ public enum ZipInspector {
     }
 
     private static func validatePath(_ name: String) throws {
-        guard !name.hasPrefix("/"), !name.hasPrefix("\\"),
+        guard !name.hasPrefix("/"), !name.hasPrefix("\\"), !name.hasPrefix("-"),
+              // unzip treats selected entries as glob patterns, not literal
+              // strings. Reject patterns rather than expanding selections.
+              !name.contains("*"), !name.contains("?"),
+              !name.contains("["), !name.contains("]"),
               !name.contains("\\"), !name.contains("\0"), !name.contains(":"),
               !name.contains("//"), name.utf8.count <= 1024,
               !name.split(separator: "/").contains(where: { $0 == ".." || $0 == "." }),
@@ -150,7 +154,7 @@ public enum ZipInspector {
                                selected: Set<String>?,
                                shouldCancel: @escaping @Sendable () -> Bool = { false }) throws -> URL {
         let listing = try inspect(archive)
-        let picked = listing.filter { selected == nil || selected!.contains($0.name) }
+        let picked = listing.filter { selected?.contains($0.name) ?? true }
         guard !picked.isEmpty else { throw Invalid.malformed("No ZIP entries selected.") }
         guard !shouldCancel() else { throw CancellationError() }
         let fm = FileManager.default
