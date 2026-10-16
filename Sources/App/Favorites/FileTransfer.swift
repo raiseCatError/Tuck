@@ -4,9 +4,10 @@ import CryptoKit
 public enum TransferMode: String, Codable, Sendable {
     case copy, move
 }
-public struct TransferSelection: Sendable {
-    public let source: URL
-    public let destination: URL
+public struct TransferPartialFailure: LocalizedError, Sendable {
+    public let output: URL
+    public let detail: String
+    public var errorDescription: String? { detail }
 }
 
 /// All paths are explicit; collisions are resolved before publication, and
@@ -49,6 +50,9 @@ public enum FileTransfer {
                 let output = try moveOrCopy(source, to: destinationDir, mode: mode,
                                             isCancelled: isCancelled)
                 outputs.append(output)
+            } catch let partial as TransferPartialFailure {
+                outputs.append(partial.output)
+                failures.append(JobFailure(inputPath: source.path, reason: partial.detail))
             } catch {
                 failures.append(JobFailure(inputPath: source.path, reason: error.localizedDescription))
             }
@@ -105,10 +109,15 @@ public enum FileTransfer {
         if mode == .move {
             // If verification fails, retain the source *and* created copy,
             // and report this as a partial move rather than risking loss.
-            guard try treeProof(src) == originalProof else {
-                throw UndoError.unsafe("Source changed after copying; destination copy was retained and source was NOT removed.")
+            do {
+                guard try treeProof(src) == originalProof else {
+                    throw UndoError.unsafe("Source changed after copying; source was NOT removed.")
+                }
+                try fm.removeItem(at: src)
+            } catch {
+                throw TransferPartialFailure(output: proposed,
+                                             detail: "Destination copy exists at \(proposed.path), but original was retained: \(error.localizedDescription)")
             }
-            try fm.removeItem(at: src)
         }
         return proposed
     }
