@@ -226,8 +226,11 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             )
             let outputs = outcome.results.compactMap(\.output)
             if token.isCancelled && outputs.isEmpty { throw CancellationError() }
-            let failures = outcome.failures.map {
+            var failures = outcome.failures.map {
                 JobFailure(inputPath: $0.0.path, reason: $0.1.description)
+            }
+            if outputs.isEmpty && failures.isEmpty {
+                failures.append(JobFailure(inputPath: paths[0], reason: "No output was created."))
             }
             return JobOutcome(outputs: outputs, failures: failures)
         }
@@ -369,6 +372,7 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             let outputs = try PDFToolkit.split(url: url, rangeDescription: selectedRange,
                                                progress: progress, shouldCancel: { token.isCancelled })
             if token.isCancelled && outputs.isEmpty { throw CancellationError() }
+            guard !outputs.isEmpty else { throw UndoError.unsafe("No PDF pages were extracted.") }
             return JobOutcome(outputs: outputs)
         }
     }
