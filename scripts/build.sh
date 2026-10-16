@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/dev-scratch.sh"
+MODULE_ARGS=()
+if [[ -n "${TUCK_SWIFT_MODULE_CACHE:-}" ]]; then
+  MODULE_ARGS=(-module-cache-path "$TUCK_SWIFT_MODULE_CACHE")
+fi
 OUT="${1:-$ROOT/build}"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
@@ -13,14 +18,14 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/PlugIns" "$EXT/Contents/MacOS"
 cp "$ROOT/Resources/App-Info.plist" "$APP/Contents/Info.plist"
 cp "$ROOT/Resources/Extension-Info.plist" "$EXT/Contents/Info.plist"
 
-xcrun swiftc -swift-version 6 -O -sdk "$SDK" -target "$TARGET" \
+xcrun swiftc "${MODULE_ARGS[@]}" -swift-version 6 -O -sdk "$SDK" -target "$TARGET" \
   -module-name TuckFinder -parse-as-library -application-extension \
   -framework AppKit -framework FinderSync -framework CryptoKit \
   -Xlinker -e -Xlinker _NSExtensionMain \
   "$ROOT"/Sources/Shared/*.swift "$ROOT"/Sources/Extension/*.swift \
   -o "$EXT/Contents/MacOS/TuckFinder"
 
-xcrun swiftc -swift-version 6 -O -sdk "$SDK" -target "$TARGET" \
+xcrun swiftc "${MODULE_ARGS[@]}" -swift-version 6 -O -sdk "$SDK" -target "$TARGET" \
   -module-name Tuck -parse-as-library -framework AppKit -framework SwiftUI -framework PDFKit \
   -framework CryptoKit -framework ImageIO -framework UniformTypeIdentifiers -framework Vision \
   "$ROOT"/Sources/Shared/*.swift "$ROOT"/Sources/App/*.swift "$ROOT"/Sources/App/*/*.swift \
