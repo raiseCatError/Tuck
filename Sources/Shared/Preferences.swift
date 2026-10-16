@@ -24,7 +24,7 @@ enum TuckPreferences {
 
     static let defaults: [String] = [
         "newFile", "openWith", "compress", "terminal",
-        "pdfToolkit", "imageToolkit", "metadata", "copyAs", "rename", "destinations", "duplicates", "zipInspector", "customActions"
+        "pdfToolkit", "imageToolkit", "metadata", "copyAs", "rename", "destinations", "duplicates", "zipInspector", "customActions", "recipes"
     ]
 
     static var order: [String] {
