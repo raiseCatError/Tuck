@@ -12,6 +12,7 @@ struct ToolkitTests {
         defer { try? FileManager.default.removeItem(at: tmpDir) }
 
         testPDFMergeAndSplit(in: tmpDir)
+        testPDFSplitCancellation(in: tmpDir)
         testPDFRotateAndReorder(in: tmpDir)
         testPDFRenderAndImages(in: tmpDir)
         testPDFOCR(in: tmpDir)
@@ -46,6 +47,25 @@ struct ToolkitTests {
         let splitAll = try! PDFToolkit.split(url: merged, rangeDescription: "each")
         assert(splitAll.count == 4, "Expected 4 split files, got \(splitAll.count)")
         print("   ✓ PDF Merge & Split verified")
+    }
+
+    static func testPDFSplitCancellation(in dir: URL) {
+        print("-> Testing PDF split cancellation after published pages")
+        let source = createTestPDF(in: dir, name: "cancel_input.pdf", pages: 3)
+        let original = try! CopyAsToolkit.sha256(url: source)
+        let token = CancellationFlag()
+        let partial = try! PDFToolkit.split(url: source, rangeDescription: "each",
+            progress: { fraction, _ in
+                if fraction >= 1.0 / 3.0 { token.cancel() }
+            },
+            shouldCancel: { token.isCancelled })
+        assert(partial.count == 2, "Two published pages must remain trackable after cancellation.")
+        for output in partial {
+            assert(FileManager.default.fileExists(atPath: output.path))
+        }
+        let after = try! CopyAsToolkit.sha256(url: source)
+        assert(original == after, "PDF source must remain untouched.")
+        print("   ✓ Partial PDF split outputs preserved")
     }
 
     static func testPDFRotateAndReorder(in dir: URL) {
