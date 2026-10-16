@@ -28,6 +28,17 @@ struct ZipInspectorTests {
         let exported2 = try ZipInspector.extract(archive: archive, destinationFolder: tmp,
                                                 selected: nil)
         assert(exported != exported2 && fm.fileExists(atPath: exported2.appendingPathComponent("first file.txt").path))
+        // A path that names a symlink must still produce a private regular
+        // snapshot. FileManager.copyItem can preserve the symlink and let
+        // unzip reread its mutable target instead.
+        let linkedArchive = tmp.appendingPathComponent("linked.zip")
+        try fm.createSymbolicLink(at: linkedArchive, withDestinationURL: archive)
+        let viaLink = try ZipInspector.extract(archive: linkedArchive,
+                                              destinationFolder: tmp, selected: ["second.txt"])
+        let linkedData = try String(contentsOf: viaLink.appendingPathComponent("second.txt"),
+                                    encoding: .utf8)
+        assert(linkedData == "second")
+
 
         // Change central entry name into a parent-directory traversal. No
         // extraction should begin even if an external tool would normalize it.
