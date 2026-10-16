@@ -2,7 +2,7 @@ import Foundation
 
 enum TuckAction: String, CaseIterable, Identifiable {
     case newFile, openWith, compress, terminal
-    case pdfToolkit, imageToolkit, metadata, copyAs, rename, destinations, duplicates, zipInspector
+    case pdfToolkit, imageToolkit, metadata, copyAs, rename, destinations, duplicates, zipInspector, customActions
     var id: String { rawValue }
 
     var title: String {
@@ -19,6 +19,7 @@ enum TuckAction: String, CaseIterable, Identifiable {
         case .destinations: "Copy / Move To"
         case .duplicates: "Find Duplicates"
         case .zipInspector: "Inspect ZIP"
+        case .customActions: "Custom Actions"
         }
     }
 
@@ -36,6 +37,7 @@ enum TuckAction: String, CaseIterable, Identifiable {
         case .destinations: "folder.badge.plus"
         case .duplicates: "square.on.square"
         case .zipInspector: "archivebox"
+        case .customActions: "bolt"
         }
     }
 }
@@ -77,6 +79,8 @@ enum TuckMenuModel {
                 return context == .other
             case .zipInspector:
                 return context == .archive
+            case .customActions:
+                return context.hasSelection && CustomActionPreferences.all.contains { $0.enabled }
             }
         }
     }

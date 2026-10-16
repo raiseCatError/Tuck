@@ -136,6 +136,8 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         case "pdfRotate":
             let deg = request.argument.flatMap(Int.init) ?? 90
             runPDFRotate(paths: request.paths, degrees: deg)
+        case "pdfReorder":
+            runPDFReorder(paths: request.paths)
         case "pdfOCR":
             runPDFOCR(paths: request.paths)
         case "pdfExtractImages":
@@ -171,6 +173,9 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         case "inspectZIP":
             ZIPWindow.show(paths: request.paths)
 
+        case "customAction":
+            runCustomAction(paths: request.paths, argument: request.argument)
+
         case "copyTo", "moveTo":
             runTransfer(paths: request.paths, argument: request.argument,
                         mode: request.operation == "moveTo" ? .move : .copy)
@@ -202,7 +207,10 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
                 window.dismiss()
                 switch job.status {
                 case .completed:
-                    self?.report("Created \(job.outputs.count) output file(s). Open Settings → Activity to review results.", title: title)
+                    let summary = job.outputs.isEmpty
+                        ? "Action completed. Open Settings → Activity to review the record."
+                        : "Created \(job.outputs.count) output file(s). Open Settings → Activity to review results."
+                    self?.report(summary, title: title)
                 case .partial:
                     self?.report(job.progressDetail + "\nSee Activity for the failed filenames and reasons.", title: "\(title) partially completed")
                 case .failed:
@@ -351,11 +359,64 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
 
     // MARK: - PDF Toolkit Handlers
 
+    private func promptOrder(labels: [String], title: String) -> [Int]? {
+        guard !labels.isEmpty else { return nil }
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = "Enter each 1-based index once, in your preferred order:\n" +
+            labels.prefix(16).enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n") +
+            (labels.count > 16 ? "\n… and \(labels.count - 16) more" : "")
+        alert.addButton(withTitle: "Continue")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: (1...labels.count).map(String.init).joined(separator: ","))
+        field.placeholderString = "1,2,3"
+        field.frame = NSRect(x: 0, y: 0, width: 360, height: 24)
+        alert.accessoryView = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let tokens = field.stringValue.split(separator: ",", omittingEmptySubsequences: false)
+        let numbers = tokens.compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        guard numbers.count == labels.count,
+              numbers.sorted() == Array(1...labels.count) else {
+            report("List every index exactly once, separated by commas.", title: "Invalid Order")
+            return nil
+        }
+        return numbers.map { $0 - 1 }
+    }
+
     private func runPDFMerge(paths: [String]) {
+        guard !paths.isEmpty else { return }
         let urls = paths.map { URL(fileURLWithPath: $0) }
+        let indices: [Int]
+        if paths.count > 1 {
+            guard let chosen = promptOrder(labels: urls.map(\.lastPathComponent),
+                                           title: "Arrange PDF Merge Inputs") else { return }
+            indices = chosen
+        } else { indices = [0] }
+        let ordered = indices.map { urls[$0] }
         queueOperation(title: "Merge into PDF", operation: "pdfMerge", paths: paths) { token, progress in
-            let merged = try PDFToolkit.merge(urls: urls, progress: progress, shouldCancel: { token.isCancelled })
+            let merged = try PDFToolkit.merge(urls: ordered, progress: progress,
+                                              shouldCancel: { token.isCancelled })
             return JobOutcome(outputs: [merged])
+        }
+    }
+
+    private func runPDFReorder(paths: [String]) {
+        guard paths.count == 1, let path = paths.first else {
+            report("Select one PDF to reorder its pages.", title: "Reorder PDF")
+            return
+        }
+        let url = URL(fileURLWithPath: path)
+        guard let pdf = PDFDocument(url: url), pdf.pageCount > 0,
+              !pdf.isEncrypted, !pdf.isLocked else {
+            report("The PDF is locked, encrypted, or unreadable.", title: "Reorder PDF")
+            return
+        }
+        guard let order = promptOrder(labels: (1...pdf.pageCount).map { "Page \($0)" },
+                                      title: "Reorder PDF Pages") else { return }
+        queueOperation(title: "Reorder PDF pages", operation: "pdfReorder", paths: [path]) { token, progress in
+            if token.isCancelled { throw CancellationError() }
+            let output = try PDFToolkit.reorder(url: url, pageOrder: order, progress: progress)
+            return JobOutcome(outputs: [output])
         }
     }
 
@@ -595,6 +656,33 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
                title: "Copied to Clipboard")
     }
 
+    private func runCustomAction(paths: [String], argument: String?) {
+        guard let value = argument, let uuid = UUID(uuidString: value),
+              let action = CustomActionPreferences.all.first(where: { $0.id == uuid }),
+              CustomActionRunner.supports(action, paths: paths) else {
+            report("This custom action is missing, disabled, or incompatible with the selected items.",
+                   title: "Custom Action Unavailable")
+            return
+        }
+        if action.requiresConfirmation {
+            let alert = NSAlert()
+            alert.messageText = "Run \(action.title)?"
+            alert.informativeText = "\(action.kind == .shortcut ? "Shortcut" : "Executable"): \(action.target)\nSelected: \(paths.count) item(s)\n\nOnly run executable code you trust."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Run Action")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        queueOperation(title: "Run \(action.title)", operation: "customAction",
+                       paths: paths, canUndo: false) { token, progress in
+            progress(0, "Running user-configured action…")
+            try CustomActionRunner.execute(action, paths: paths,
+                                           shouldCancel: { token.isCancelled })
+            progress(1, "Action completed")
+            return JobOutcome()
+        }
+    }
+
     private func runTransfer(paths: [String], argument: String?, mode: TransferMode) {
         guard let argument else { return }
         let folder: URL
@@ -645,31 +733,66 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
 
         let alert = NSAlert()
         alert.messageText = "Advanced Batch Rename"
-        alert.informativeText = "Configure find and replace for selected filenames."
+        alert.informativeText = "Choose a rule. Find/Regex: pattern + replacement. Prefix/Suffix: prefix + suffix. Number: prefix + start,digits. Extension: new extension in the first field."
         alert.addButton(withTitle: "Preview")
         alert.addButton(withTitle: "Cancel")
 
         let stack = NSStackView()
         stack.orientation = .vertical
-        stack.spacing = 6
-        let findField = NSTextField(string: "")
-        findField.placeholderString = "Find text"
-        let replaceField = NSTextField(string: "")
-        replaceField.placeholderString = "Replace with"
-        stack.addArrangedSubview(findField)
-        stack.addArrangedSubview(replaceField)
-        stack.frame = NSRect(x: 0, y: 0, width: 330, height: 60)
+        stack.spacing = 8
+        let mode = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 340, height: 26), pullsDown: false)
+        mode.addItems(withTitles: ["Find & Replace", "Regex Replace", "Prefix / Suffix",
+                                    "Numbered Sequence", "Change Extension"])
+        let first = NSTextField(string: "")
+        first.placeholderString = "Pattern / prefix / new extension"
+        let second = NSTextField(string: "")
+        second.placeholderString = "Replacement / suffix / start,digits"
+        stack.addArrangedSubview(mode)
+        stack.addArrangedSubview(first)
+        stack.addArrangedSubview(second)
+        stack.frame = NSRect(x: 0, y: 0, width: 340, height: 94)
         alert.accessoryView = stack
 
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        guard !findField.stringValue.isEmpty else {
-            report("Enter a nonempty search term before renaming.", title: "Invalid Rename")
+        let rule: RenameRule
+        switch mode.indexOfSelectedItem {
+        case 0:
+            guard !first.stringValue.isEmpty else {
+                report("Find text cannot be empty.", title: "Invalid Rename")
+                return
+            }
+            rule = RenameRule(op: .findReplace(find: first.stringValue,
+                                               replace: second.stringValue, isRegex: false))
+        case 1:
+            do { _ = try NSRegularExpression(pattern: first.stringValue) }
+            catch {
+                report(error.localizedDescription, title: "Invalid Regular Expression")
+                return
+            }
+            rule = RenameRule(op: .findReplace(find: first.stringValue,
+                                               replace: second.stringValue, isRegex: true))
+        case 2:
+            guard !first.stringValue.isEmpty || !second.stringValue.isEmpty else {
+                report("Enter a prefix or suffix.", title: "Invalid Rename")
+                return
+            }
+            rule = RenameRule(op: .prefixSuffix(prefix: first.stringValue, suffix: second.stringValue))
+        case 3:
+            let numbers = second.stringValue.isEmpty ? ["1", "3"] :
+                second.stringValue.split(separator: ",").map(String.init)
+            guard numbers.count == 2, let start = Int(numbers[0]), let digits = Int(numbers[1]),
+                  start >= 0, digits >= 1, digits <= 12 else {
+                report("Enter start,digits (example: 1,3).", title: "Invalid Numbering")
+                return
+            }
+            rule = RenameRule(op: .numberedSequence(prefix: first.stringValue,
+                                                     start: start, digits: digits))
+        case 4:
+            rule = RenameRule(op: .changeExtension(newExtension: first.stringValue))
+        default:
             return
         }
-
-        let rule = RenameRule(op: .findReplace(
-            find: findField.stringValue, replace: replaceField.stringValue, isRegex: false))
         let plan = AdvancedRenameToolkit.preview(urls: urls, rule: rule)
         let collisions = plan.filter(\.hasCollision)
         guard collisions.isEmpty else {
