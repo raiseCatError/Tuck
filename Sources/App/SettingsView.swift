@@ -5,6 +5,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     case menu = "Menu"
     case compression = "Compression"
     case activity = "Activity"
+    case destinations = "Destinations"
     case applications = "Applications"
     case general = "General"
     var id: Self { self }
@@ -13,6 +14,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .menu: "list.bullet"
         case .compression: "arrow.down.right.and.arrow.up.left"
         case .activity: "clock.arrow.circlepath"
+        case .destinations: "folder.badge.gearshape"
         case .applications: "terminal"
         case .general: "gearshape"
         }
@@ -45,6 +47,7 @@ struct SettingsView: View {
                     case .menu: menuPane
                     case .compression: compressionPane
                     case .activity: activityPane
+                    case .destinations: FavoriteSettingsView()
                     case .applications: applicationsPane
                     case .general: generalPane
                     }
@@ -171,6 +174,12 @@ struct SettingsView: View {
             }
         case .rename:
             Button(action.title) { lastPreview = "Advanced Rename → Batch Pattern Rename" }
+        case .destinations:
+            Button(action.title) { lastPreview = "Copy or Move to a saved destination…" }
+        case .duplicates:
+            Button(action.title) { lastPreview = "Find exact duplicates in selected folders" }
+        case .zipInspector:
+            Button(action.title) { lastPreview = "Browse or extract ZIP entries" }
         }
     }
 
@@ -313,6 +322,18 @@ struct SettingsView: View {
                                                 showActivityError = true
                                             }
                                         }
+                                    }
+                                    .buttonStyle(.bordered).controlSize(.small)
+                                }
+                                if job.items.count == 1, job.outputs.count == 1,
+                                   !job.isUndone, (job.operation == "compress" || job.operation == "compressCustom"),
+                                   let input = job.items.first?.inputPath,
+                                   let output = job.outputs.first,
+                                   ComparisonWindow.supported(source: URL(fileURLWithPath: input),
+                                                              output: URL(fileURLWithPath: output)) {
+                                    Button("Compare") {
+                                        ComparisonWindow.show(source: URL(fileURLWithPath: input),
+                                                              output: URL(fileURLWithPath: output))
                                     }
                                     .buttonStyle(.bordered).controlSize(.small)
                                 }
