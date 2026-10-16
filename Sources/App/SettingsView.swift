@@ -88,6 +88,7 @@ struct SettingsView: View {
                                         TuckPreferences.setEnabled(id, to: on)
                                     }
                                 )).labelsHidden()
+                                    .accessibilityLabel("Show \(action.title) in Finder")
                                 Image(systemName: "line.3.horizontal").foregroundStyle(.tertiary)
                             }
                         }
@@ -288,6 +289,8 @@ struct SettingsView: View {
                             if job.status == .running {
                                 ProgressView(value: job.progress)
                                     .progressViewStyle(.linear)
+                                    .accessibilityLabel("\(job.title) progress")
+                                    .accessibilityValue("\(Int(job.progress * 100)) percent")
                             }
                             Text(job.progressDetail)
                                 .font(.caption).foregroundStyle(.secondary)

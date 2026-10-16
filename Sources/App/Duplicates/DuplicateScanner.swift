@@ -189,6 +189,7 @@ private struct DuplicatesView: View {
                                             else { selected.remove(proof.path) }
                                         }
                                     )).labelsHidden()
+                                        .accessibilityLabel("Select duplicate \(proof.path) for review")
                                     Text(proof.path).font(.callout).lineLimit(2)
                                         .textSelection(.enabled)
                                     Spacer()
