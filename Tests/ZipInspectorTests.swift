@@ -37,7 +37,7 @@ struct ZipInspectorTests {
             corrupted[$0+2] == 0x01 && corrupted[$0+3] == 0x02
         }) else { fatalError("Fixture has no central directory") }
         let start = cd + 46
-        let malicious = Array("../bad/file.txt".utf8)
+        let malicious = Array("../a.txt".utf8)
         // Replace only an existing, sufficiently long central name.
         let existingNameLength = Int(corrupted[cd+28]) + 256 * Int(corrupted[cd+29])
         if existingNameLength >= malicious.count {
