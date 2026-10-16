@@ -6,18 +6,41 @@ import CryptoKit
 
 public enum CopyAsToolkit {
 
+    /// A relative path is only meaningful when the selection has a common
+    /// containing directory. Never use the helper process's working directory.
+    private static func relativeRoot(for urls: [URL]) -> [String]? {
+        guard let first = urls.first else { return nil }
+        var shared = first.standardizedFileURL.deletingLastPathComponent().pathComponents
+        for url in urls.dropFirst() {
+            let parts = url.standardizedFileURL.deletingLastPathComponent().pathComponents
+            shared = Array(zip(shared, parts).prefix(while: { $0 == $1 }).map(\.0))
+        }
+        // "/" isn't a meaningful base when items live on unrelated volumes.
+        return shared.count > 1 ? shared : nil
+    }
+
+    /// Compute SHA-256 incrementally rather than loading an entire file into RAM.
+    static func sha256(url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while let chunk = try handle.read(upToCount: 1_048_576), !chunk.isEmpty {
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
     public static func format(urls: [URL], format: CopyAsFormat) -> String {
-        let results = urls.map { url -> String in
+        let relativeRoot = relativeRoot(for: urls)
+        return urls.map { url -> String in
             switch format {
             case .absolutePath:
                 return url.path
             case .relativePath:
-                let current = FileManager.default.currentDirectoryPath
-                if url.path.hasPrefix(current) {
-                    let rel = String(url.path.dropFirst(current.count))
-                    return rel.hasPrefix("/") ? String(rel.dropFirst()) : rel
-                }
-                return url.lastPathComponent
+                guard let root = relativeRoot else { return url.path }
+                let components = url.standardizedFileURL.pathComponents
+                guard components.starts(with: root) else { return url.path }
+                return components.dropFirst(root.count).joined(separator: "/")
             case .fileNameWithExt:
                 return url.lastPathComponent
             case .fileNameWithoutExt:
@@ -28,14 +51,12 @@ public enum CopyAsToolkit {
                 let escaped = url.path.replacingOccurrences(of: "'", with: "'\\''")
                 return "'\(escaped)'"
             case .sha256:
-                if let data = try? Data(contentsOf: url, options: .mappedIfSafe) {
-                    let digest = SHA256.hash(data: data)
-                    return "\(url.lastPathComponent): " + digest.compactMap { String(format: "%02x", $0) }.joined()
+                guard let digest = try? sha256(url: url) else {
+                    return "\(url.lastPathComponent): Unable to compute"
                 }
-                return "\(url.lastPathComponent): Unable to compute"
+                return "\(url.lastPathComponent): \(digest)"
             }
-        }
-        return results.joined(separator: "\n")
+        }.joined(separator: "\n")
     }
 
     public static func copyToClipboard(text: String) {
