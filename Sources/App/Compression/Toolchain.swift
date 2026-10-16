@@ -108,19 +108,27 @@ enum Toolchain {
         guard (shouldCancel?() ?? false) == false else { throw ToolError.cancelled }
         let capture = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("tuck-tool-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: capture, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: capture, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: capture) }
         let outURL = capture.appendingPathComponent("stdout")
         let errURL = capture.appendingPathComponent("stderr")
-        FileManager.default.createFile(atPath: outURL.path, contents: nil)
-        FileManager.default.createFile(atPath: errURL.path, contents: nil)
+        guard FileManager.default.createFile(atPath: outURL.path, contents: nil),
+              FileManager.default.createFile(atPath: errURL.path, contents: nil) else {
+            throw ToolError.failed(status: -1, output: "Cannot create temporary tool logs.")
+        }
+        let outHandle = try FileHandle(forWritingTo: outURL)
+        let errHandle = try FileHandle(forWritingTo: errURL)
+        defer {
+            try? outHandle.close()
+            try? errHandle.close()
+        }
 
         let process = Process()
         process.executableURL = tool.url
         process.arguments = arguments
         if let workingDirectory { process.currentDirectoryURL = workingDirectory }
-        process.standardOutput = try FileHandle(forWritingTo: outURL)
-        process.standardError = try FileHandle(forWritingTo: errURL)
+        process.standardOutput = outHandle
+        process.standardError = errHandle
         do { try process.run() } catch {
             throw ToolError.failed(status: -1, output: error.localizedDescription)
         }
@@ -146,13 +154,17 @@ enum Toolchain {
     }
 
     private static func stop(_ process: Process) {
+        guard process.isRunning else { process.waitUntilExit(); return }
         process.terminate()
         Thread.sleep(forTimeInterval: 0.2)
         if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        process.waitUntilExit()
     }
 
     private static func prefix(of url: URL) -> String {
-        guard let data = try? Data(contentsOf: url) else { return "" }
-        return String(decoding: data.prefix(4096), as: UTF8.self)
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return "" }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 4096) else { return "" }
+        return String(decoding: data, as: UTF8.self)
     }
 }
