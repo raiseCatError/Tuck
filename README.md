@@ -1,37 +1,45 @@
 # Tuck
 
-**Tuck** is a native Swift 6 macOS Finder context-menu utility. Select files in Finder, open **Tuck** in the right-click menu, and run common operations without opening a heavyweight file manager.
+Tuck is a native **Swift 6 macOS Finder context-menu utility** for file compression, PDF and image operations, ZIP archives, renaming, inspection and opt-in local automation. File operations run locally, with a small Finder Sync extension dispatching authenticated requests to the Tuck application.
 
-[GitHub issues and roadmap](https://github.com/raiseCatError/Tuck/issues/1) · [Finder QA checklist](docs/finder-qa.md)
+**Status:** development build, preparing for physical Finder QA. Automated tests and builds do not establish that every real Finder action, optional codec or macOS accessibility path has been physically validated.
 
-> Development status: **personal-use, under active testing**. Headless Swift 6, IPC and toolkit tests run in macOS CI; full real-world Finder workflows still require hands-on verification on a Mac. Feature availability depends on file type, installed codecs and permissions.
+[Roadmap](https://github.com/raiseCatError/Tuck/issues/1) · [Physical QA](docs/finder-qa.md) · [Release readiness](docs/release-readiness.md)
 
-## Features
+## Current functionality
 
-| Area | Current functionality |
+| Category | Actions |
 | --- | --- |
-| Compression | JPEG, PNG, HEIC, TIFF, BMP and PDF to a **strictly-under** decimal-MB target; separate, collision-safe `-compressed` output; ZIP archive creation |
-| PDF Toolkit | Merge selected PDFs and images, split by page/range, rotate pages, on-device Vision OCR, extract embedded images (with `pdfimages`), render pages to images |
-| Image Toolkit | Convert between supported native formats and optional WebP, resize by percentage, dimensions or longest edge |
-| Metadata | Inspect format, dimensions, color, EXIF/GPS, selected PDF metadata and SHA-256; create a `-stripped` copy |
-| Finder conveniences | New File templates, Open With installed editors, Open Terminal Here, Copy As filename/path/URL/shell-quoted path/checksum |
-| Rename | Find/replace via a before-and-after confirmation; transactional rename with rollback and source identity checks; other rename rules exist in the backend but aren't all exposed in the current Finder interface |
-| Activity | Single-heavy-job FIFO queue, progress, queue pause, cooperative cancel, retry of eligible in-session failures, persisted recent history, verified Undo of suitable generated files and renames |
+| Compression | Compress JPEG, PNG, HEIC, TIFF, BMP and PDF to a target **strictly below** a decimal-MB limit; ZIP creation |
+| PDF | Merge PDFs/images in explicit order; split pages/ranges; rotate/reorder pages; OCR using local Apple Vision; render pages to PNG; extract *actual embedded raster assets* with Poppler's `pdfimages` |
+| Images | Convert among supported ImageIO formats and optionally WebP; resize by percentage, dimensions or longest edge; refuse unsafe/unsupported conversions rather than silently dropping animation frames |
+| Metadata | Inspect dimensions, format and supported PDF/EXIF/GPS metadata, compute streaming SHA-256; create stripped copies |
+| Finder convenience | New File, Open With, Open Terminal Here; Copy As names, paths, URLs, shell-quoted paths and checksums |
+| Rename | Preview and apply find/replace, regex, prefix/suffix, numbered sequence or extension change; transactional rollback and collision detection |
+| Comparison | Read-only side-by-side or split-slider image/PDF previews with file-size metrics, zoom and PDF page navigation |
+| ZIP inspection | Inspect and search ZIP entries; select specific entries to extract into a fresh folder after validation |
+| Duplicate finder | Find *exact-content* duplicates by file identity, size and full SHA-256; user explicitly selects copies for Trash |
+| Destinations | Save up to eight folder bookmarks; Copy To / Move To with collision-safe publication and confirmation before moves |
+| Custom actions | Explicitly configure a user-chosen executable or macOS Shortcut; compatible Finder menu actions, confirmation, bounded execution and argv-safe file paths |
+| Recipes | Save non-destructive typed **image** workflows (resize, format conversion, metadata removal) and export copies to an `export` folder |
+| Watched folders | Opt-in, event-driven direct-child image processing through a saved recipe while the Tuck app is running; rule enable/disable and global pause |
+| Activity & Undo | Single-worker heavy-operation queue, cancellation, limited in-session retry, per-input failures, persisted history, Reveal Output and verified Undo of eligible generated regular files or batch renames |
 
-### Important limits and safety
+### Behavior and limits
 
-- **Original files remain untouched by default.** Compression, image conversion, metadata stripping, ZIP and PDF transformations create new outputs. Rename is explicitly confirmed before changing names.
-- **Under 5 MB** means *strictly less than 5,000,000 bytes*; not 5 MiB. A requested size may be unattainable, particularly for lossless formats. No quality presets: Tuck automatically searches for the best feasible fidelity.
-- Automatic Undo requires evidence that a generated output is still the same regular file (content hash and device/inode identity). A modified/replaced file is refused. Verified generated copies go to **Trash**, not permanent deletion. Older history without proofs, directories and symlinks do not qualify for automatic cleanup.
-- The helper and extension authenticate requests. The current limit is **256 selected paths or 64 KB of signed payload**; exceeding it shows a warning rather than silently truncating paths.
-- OCR uses Apple's local Vision framework; its recognition accuracy depends on input scans. Rebuilt documents, encrypted PDFs, digital signatures, form fields and annotations can require special handling. Do not treat OCR or metadata stripping as secure redaction.
-- Image/PDF operations may only support a subset of metadata and codecs. Some outputs may differ in metadata or encoding details. Validate important documents before sharing them.
-- Jobs are **cooperatively cancelled**. Some external tools cannot stop immediately. A cancelled operation may have already published outputs, which should be inspected in Activity. Restarted jobs are marked interrupted; the executable closure is not persisted for automatic replay.
-- External compression encoders are optional. Use tools from trusted package sources. Tuck does not silently install dependencies or send files to a cloud service.
+- **Non-destructive by default.** Compression, PDF/image tools and recipes publish separate copies; rename and Move To are explicitly confirmed. Generated-file Undo checks content hashes and file identity before using macOS Trash. It will refuse modified/replaced outputs, unverified old history, symlinks and directories.
+- **Decimal limits:** “Under 5 MB” means *less than 5,000,000 bytes*, not 5 MiB. Strict-size output might be impossible without unacceptable visual changes, especially for lossless formats; errors should be explicit.
+- **IPC:** Signed Finder requests have a hard limit of **256 paths and 64 KB of payload**. Larger or long-path selections are rejected with a warning instead of being silently truncated. This is not unlimited batch processing.
+- **ZIP inspector:** Supports a conservative subset of ZIP/Deflate; rejects encrypted/ZIP64, symlink entries, traversal paths and filenames that the underlying extractor could interpret as glob selectors. Inspection is limited to 10,000 entries and 2 GB expanded size.
+- **Image/document integrity:** Animated/multiframe inputs are refused where processing would drop frames. OCR creates a searchable output but recognition is not guaranteed. Tuck is **not a secure PDF redaction utility**; digital signatures, forms, annotations, unusual metadata and color profiles can require external validation.
+- **Jobs:** Cancellation is cooperative and may leave already-published outputs visible in Activity. Persisted unfinished jobs are marked interrupted after restart; Tuck does not replay a previously running executable automatically.
+- **Custom actions:** Users who explicitly configure a script or Shortcut are authorizing it to operate with their own permissions. Tuck does not sandbox those user executables or guarantee they are non-destructive.
+- **Recipes and watchers:** Recipes are built-in image steps only, not an arbitrary script runner. Watch rules do not install a daemon and only work while the app is running; existing files are baselined when a watch starts. Recipe execution requires mounted external scratch storage.
+- **Scratch:** Normal compression may fall back to system temporary storage or the source volume when no suitable external volume is found. This is **not** an external-only guarantee.
 
-## Build, install and uninstall
+## Build and install
 
-Requirements: **macOS 14+**, Swift 6 toolchain/Xcode macOS SDK, and Finder Sync extensions permitted. Apple Silicon has been tested by development and CI; other architectures need additional verification.
+**Prerequisites:** macOS 14 deployment target and a Swift 6-capable Xcode/macOS SDK. Development and hosted CI use Apple Silicon; Intel is not independently validated. No paid Apple developer membership is required for a locally ad-hoc-signed installation.
 
 ```bash
 git clone https://github.com/raiseCatError/Tuck.git
@@ -39,38 +47,35 @@ cd Tuck
 ./scripts/test-model.sh
 ./scripts/build.sh
 ./scripts/install.sh
-```
-
-To use the right-click menu, open **System Settings → General → Login Items & Extensions → Finder Extensions** and enable Tuck. The installer ad-hoc signs a personal-use copy in `~/Applications/Tuck.app`. Launch the app directly to open Settings; it is designed not to need a permanent Dock window.
-
-```bash
 ./scripts/verify-ipc.sh
 bash ./scripts/verify-finder-environment.sh
-./scripts/uninstall.sh
 ```
 
-`verify-ipc.sh` tests the authenticated app/extension URL dispatch but **does not** prove the Finder menu works; follow [docs/finder-qa.md](docs/finder-qa.md) for the real UI check. Do not perform destructive rename/Undo experiments on original documents.
+The installer places the application in `~/Applications/Tuck.app`. Open it, then enable **Tuck** under **System Settings → General → Login Items & Extensions → Finder Extensions**. Fully quit an older Tuck process before testing a newly installed build.
+
+The IPC verification script checks the authenticated URL handoff. It **does not** physically right-click Finder or prove that the installed Finder menu appears. Use the [Finder QA matrix](docs/finder-qa.md) to test the complete installed app on disposable source files.
+
+To uninstall the application, run `./scripts/uninstall.sh`. Review its actions first; user preferences and history may be intentionally retained.
 
 ### Optional local tools
 
-The compressor uses native ImageIO/PDFKit where supported and can discover supported command-line encoders such as `jpegli`, MozJPEG/`cjpeg`, `oxipng`, `pngquant`, `qpdf`, Ghostscript, and `7z` for standard Deflate ZIP. Authentic embedded PDF raster extraction requires Poppler's `pdfimages`; WebP conversion can use `cwebp`. Missing optional executables may disable particular formats or fall back to native codecs.
+Built-in Apple ImageIO, PDFKit and Vision functionality works without cloud services. Optional, separately installed tools can improve formats or compression: `cjpegli`, `cjpeg`/MozJPEG, `jpegtran`, `oxipng`, `pngquant`, `qpdf`, Ghostscript (`gs`), `7zz`/`7z`, Poppler (`pdfimages`) and `cwebp`. Missing tools may disable specific actions or cause a native fallback with a different result. Tuck does not silently download executables.
 
-**Packaging warning:** Do not bundle a third-party executable into a redistributable build without checking its current license, notices and distribution requirements. They are not bundled in this repository.
+Optional third-party binaries are **not bundled**. Check their individual distribution licenses before redistributing them.
 
-## Diagnostics and development
-
-The app uses an authenticated `tuck://perform` hop from Finder Sync to the helper. Structured logs use the `dev.raisecaterror.tuck` subsystem and should never include signed URLs, authentication keys or private file paths.
+## Diagnostics
 
 ```bash
-log stream --level info --predicate 'subsystem == "dev.raisecaterror.tuck"'
-./scripts/verify-ipc.sh
 ./scripts/test-model.sh
+./scripts/verify-ipc.sh
+bash ./scripts/verify-finder-environment.sh
+log stream --level info --predicate 'subsystem == "dev.raisecaterror.tuck"'
 ```
 
-Development scratch behavior: Tuck attempts to select a mounted writable volume with sufficient capacity for compression intermediates, but **currently can fall back to the macOS system temporary directory or source folder**. This is not a guarantee of external-only temporary storage; if you need strict fail-closed external scratch behavior, treat that as a separate configuration/safety requirement before processing huge batches.
+Tuck's IPC uses signed `tuck://perform` requests and short-lived freshness checks. Avoid copying signed request URLs or user file paths into bug reports. Logs are designed not to expose signatures and shared keys.
 
-See [AGENTS.md](AGENTS.md) for development constraints. Build/test verification occurs on GitHub-hosted macOS CI for pull requests; Finder GUI integration and entitlement behavior require physical QA.
+See [AGENTS.md](AGENTS.md) for repository development rules, [NOTICE.md](NOTICE.md) for acknowledgements and [LICENSE](LICENSE) for MIT licensing.
 
-## License and credit
+## Shipping
 
-Tuck is licensed under [MIT](LICENSE). The Finder Sync architecture was informed by `nikgrbn/finder-menu` (MIT). See [NOTICE.md](NOTICE.md). There is no AI attribution in the code.
+A signed-and-built app on GitHub Actions is **not notarized for public distribution**. The release checklist documents Developer ID, extension entitlements, fresh-machine installation, manual Finder/VoiceOver QA and artifact checksums. No workflow tags, notarizes or publishes builds automatically.
