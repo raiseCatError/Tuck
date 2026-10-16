@@ -14,9 +14,9 @@ public struct TransferPartialFailure: LocalizedError, Sendable {
 /// copies are first constructed at an unguessable staging location on the
 /// destination volume. No existing destination is ever overwritten.
 public enum FileTransfer {
-    private static let fm = FileManager.default
 
     public static func destination(for source: URL, in directory: URL) throws -> URL {
+        let fm = FileManager.default
         let parent = directory.standardizedFileURL
         guard (try parent.resourceValues(forKeys: [.isDirectoryKey])).isDirectory == true else {
             throw UndoError.unsafe("Destination is not an accessible folder.")
@@ -62,6 +62,7 @@ public enum FileTransfer {
 
     private static func moveOrCopy(_ source: URL, to folder: URL, mode: TransferMode,
                                    isCancelled: @escaping @Sendable () -> Bool) throws -> URL {
+        let fm = FileManager.default
         guard !isCancelled() else { throw CancellationError() }
         let src = source.standardizedFileURL
         let dst = folder.standardizedFileURL
@@ -125,6 +126,7 @@ public enum FileTransfer {
     /// Each regular file is fully hashed. Directory manifests include relative
     /// paths, sizes and hashes, so same-size but different-content trees differ.
     private static func treeProof(_ url: URL) throws -> String {
+        let fm = FileManager.default
         let attrs = try fm.attributesOfItem(atPath: url.path)
         let kind = attrs[.type] as? FileAttributeType
         if kind == .typeRegular {
@@ -157,6 +159,7 @@ public enum FileTransfer {
     }
 
     private static func verifyNoSymlinks(_ root: URL) throws {
+        let fm = FileManager.default
         guard let en = fm.enumerator(at: root, includingPropertiesForKeys: [.isSymbolicLinkKey],
                                      options: []) else {
             throw UndoError.unsafe("Cannot inspect source directory.")
