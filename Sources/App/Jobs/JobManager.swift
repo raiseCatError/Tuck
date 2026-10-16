@@ -67,10 +67,11 @@ final class JobManager: ObservableObject {
     @discardableResult
     func enqueue(title: String, operation: String, paths: [String],
                  canUndo: Bool = true,
+                 historyItems: [JobItemStatus]? = nil,
                  onComplete: Completion? = nil,
                  executor: @escaping Executor) -> UUID {
         let record = JobRecord(title: title, operation: operation,
-                               items: paths.map { JobItemStatus(inputPath: $0) })
+                               items: historyItems ?? paths.map { JobItemStatus(inputPath: $0) })
         jobs.insert(record, at: 0)
         executors[record.id] = executor
         if let onComplete { completions[record.id] = onComplete }
