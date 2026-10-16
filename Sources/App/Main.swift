@@ -166,6 +166,9 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             let fmt = request.argument.flatMap(CopyAsFormat.init(rawValue:)) ?? .absolutePath
             runCopyAs(paths: request.paths, format: fmt)
 
+        case "inspectZIP":
+            ZIPWindow.show(paths: request.paths)
+
         // MARK: - Advanced Rename
         case "advancedRename":
             runAdvancedRename(paths: request.paths)
