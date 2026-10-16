@@ -28,7 +28,7 @@ struct TuckRequest: Codable, Sendable {
 
     init(operation: String, paths: [String], argument: String? = nil) {
         self.operation = operation
-        self.paths = Array(paths.prefix(16))
+        self.paths = Array(paths.prefix(256))
         self.argument = argument
         self.timestamp = Int64(Date().timeIntervalSince1970)
         self.nonce = UUID().uuidString
@@ -43,7 +43,7 @@ struct TuckRequest: Codable, Sendable {
             TuckLog.ipcLogger.error("ipc.prepare-failed op=\(self.operation, privacy: .public) reason=encode-failed")
             return nil
         }
-        guard payload.count < 12000 else {
+        guard payload.count < 65536 else {
             TuckLog.ipcLogger.error("ipc.prepare-failed op=\(self.operation, privacy: .public) reason=payload-too-large")
             return nil
         }
@@ -76,7 +76,7 @@ struct TuckRequest: Codable, Sendable {
         }
         guard let p = items.first(where: { $0.name == "payload" })?.value,
               let s = items.first(where: { $0.name == "signature" })?.value,
-              let payload = Data(base64Encoded: p), payload.count < 12000,
+              let payload = Data(base64Encoded: p), payload.count < 65536,
               let signature = Data(base64Encoded: s) else {
             return .failure(.malformedQuery)
         }
@@ -89,7 +89,7 @@ struct TuckRequest: Codable, Sendable {
         }
         let age = Int64(Date().timeIntervalSince1970) - request.timestamp
         guard (-5...45).contains(age) else { return .failure(.staleTimestamp) }
-        guard request.paths.count <= 16,
+        guard request.paths.count <= 256,
               request.paths.allSatisfy({ $0.hasPrefix("/") && !$0.contains("\0") && $0.count < 4096 }) else {
             return .failure(.badPaths)
         }

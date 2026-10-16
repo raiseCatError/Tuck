@@ -56,12 +56,12 @@ struct IPCTests {
         assert(failure(of: signed(staleBy: 1, paths: ["relative/path"])) == .badPaths)
         assert(failure(of: signed(staleBy: 1, paths: ["/tmp/\0evil"])) == .badPaths)
         assert(failure(of: signed(staleBy: 1, paths: ["/" + String(repeating: "a", count: 5000)])) == .badPaths)
-        assert(failure(of: signed(staleBy: 1, paths: ["/tmp"], forcePaths: Array(repeating: "/tmp", count: 20))) == .badPaths,
-               "the helper refuses more than sixteen paths even in a correctly signed payload")
+        assert(failure(of: signed(staleBy: 1, paths: ["/tmp"], forcePaths: Array(repeating: "/tmp", count: 300))) == .badPaths,
+               "the helper refuses more than 256 paths even in a correctly signed payload")
         assert(failure(of: signed(staleBy: 1, paths: ["/tmp"], argument: String(repeating: "x", count: 600))) == .badArgument)
 
         // The signer caps what it will send.
-        assert(TuckRequest(operation: "zip", paths: Array(repeating: "/tmp", count: 40)).paths.count == 16)
+        assert(TuckRequest(operation: "zip", paths: Array(repeating: "/tmp", count: 300)).paths.count == 256)
 
         print("IPCTests passed")
     }
