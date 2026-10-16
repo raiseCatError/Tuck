@@ -24,11 +24,11 @@ final class JobManager: ObservableObject {
     private var undoInProgress = Set<UUID>()
     private let historyFileURL: URL
 
-    private init() {
+    init(historyFileOverride: URL? = nil) {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("Tuck", isDirectory: true)
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
-        historyFileURL = support.appendingPathComponent("history.json")
+        historyFileURL = historyFileOverride ?? support.appendingPathComponent("history.json")
         loadHistory()
     }
 
@@ -148,7 +148,7 @@ final class JobManager: ObservableObject {
         }
 
         let canProtect = undoRequested.contains(jobId)
-            && !outputs.isEmpty && !wasCancelled && error == nil
+            && !outputs.isEmpty && error == nil
         if canProtect { undoRequested.remove(jobId) }
         cancelTokens.removeValue(forKey: jobId)
         activeJobIDs.remove(jobId)
