@@ -45,14 +45,9 @@ public enum MetadataToolkit {
         let byteSize = attr[.size] as? Int64 ?? 0
         let sizeDesc = String(format: "%.2f MB (%d bytes)", Double(byteSize) / 1_000_000.0, byteSize)
 
-        // SHA-256 checksum
-        let hashString: String
-        if let data = try? Data(contentsOf: url, options: .mappedIfSafe) {
-            let digest = SHA256.hash(data: data)
-            hashString = digest.compactMap { String(format: "%02x", $0) }.joined()
-        } else {
-            hashString = "Unable to compute"
-        }
+        // Stream large files in bounded chunks. A multi-gigabyte image or PDF
+        // must never be mapped into RAM just to show its checksum.
+        let hashString = (try? CopyAsToolkit.sha256(url: url)) ?? "Unable to compute"
 
         let ext = url.pathExtension.lowercased()
 
