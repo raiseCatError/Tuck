@@ -166,6 +166,10 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             let fmt = request.argument.flatMap(CopyAsFormat.init(rawValue:)) ?? .absolutePath
             runCopyAs(paths: request.paths, format: fmt)
 
+        case "copyTo", "moveTo":
+            runTransfer(paths: request.paths, argument: request.argument,
+                        mode: request.operation == "moveTo" ? .move : .copy)
+
         // MARK: - Advanced Rename
         case "advancedRename":
             runAdvancedRename(paths: request.paths)
@@ -584,6 +588,50 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         CopyAsToolkit.copyToClipboard(text: text)
         report("Copied \(count) item(s) as \(format.rawValue) to clipboard:\n\n\(text)",
                title: "Copied to Clipboard")
+    }
+
+    private func runTransfer(paths: [String], argument: String?, mode: TransferMode) {
+        guard let argument else { return }
+        let folder: URL
+        if argument == "choose" {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.canCreateDirectories = true
+            panel.message = "Choose destination for \(mode == .move ? "Move" : "Copy")"
+            guard panel.runModal() == .OK, let chosen = panel.url else { return }
+            folder = chosen
+        } else {
+            guard let id = UUID(uuidString: argument),
+                  let favorite = FavoritePreferences.all.first(where: { $0.id == id }) else {
+                report("The chosen favourite is no longer available.", title: "Destination Missing")
+                return
+            }
+            do { folder = try favorite.resolve() }
+            catch {
+                report("The saved folder is missing or disconnected. Choose another destination.",
+                       title: "Destination Unavailable")
+                return
+            }
+        }
+        if mode == .move {
+            let confirm = NSAlert()
+            confirm.messageText = "Move \(paths.count) selected item(s)?"
+            confirm.informativeText = "Destination: \(folder.path)\n\nTuck will never overwrite an existing item. Cross-volume moves copy, verify, then remove unchanged originals."
+            confirm.alertStyle = .warning
+            confirm.addButton(withTitle: "Move")
+            confirm.addButton(withTitle: "Cancel")
+            guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        }
+        let undoable = mode == .copy && paths.allSatisfy {
+            (try? URL(fileURLWithPath: $0).resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+        }
+        queueOperation(title: mode == .copy ? "Copy to Folder" : "Move to Folder",
+                       operation: mode == .copy ? "copyTo" : "moveTo", paths: paths,
+                       canUndo: undoable) { token, progress in
+            try FileTransfer.transfer(paths: paths, to: folder, mode: mode,
+                                      isCancelled: { token.isCancelled }, progress: progress)
+        }
     }
 
     private func runAdvancedRename(paths: [String]) {
