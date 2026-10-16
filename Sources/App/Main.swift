@@ -528,8 +528,17 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
 
     private func runMetadataInspect(paths: [String]) {
         let urls = paths.map { URL(fileURLWithPath: $0) }
-        let reports = urls.map { MetadataToolkit.inspect(url: $0).summary }
-        report(reports.joined(separator: "\n\n--------------------\n\n"), title: "Metadata Inspector")
+        // PDFKit inspection and hashing can be expensive. Never perform them
+        // on the helper's UI actor while Finder waits for a response.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let text = urls.map { MetadataToolkit.inspect(url: $0).summary }
+                .joined(separator: "\n\n--------------------\n\n")
+            await self?.showMetadataInspection(text)
+        }
+    }
+
+    private func showMetadataInspection(_ text: String) {
+        report(text, title: "Metadata Inspector")
     }
 
     private func runMetadataStrip(paths: [String]) {
@@ -554,9 +563,22 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
 
     private func runCopyAs(paths: [String], format: CopyAsFormat) {
         let urls = paths.map { URL(fileURLWithPath: $0) }
-        let text = CopyAsToolkit.format(urls: urls, format: format)
+        if format == .sha256 {
+            // Hashing large selected files must not block the Settings app.
+            Task.detached(priority: .userInitiated) { [weak self] in
+                let text = CopyAsToolkit.format(urls: urls, format: format)
+                await self?.finishCopyAs(text: text, count: urls.count, format: format)
+            }
+        } else {
+            finishCopyAs(text: CopyAsToolkit.format(urls: urls, format: format),
+                         count: urls.count, format: format)
+        }
+    }
+
+    private func finishCopyAs(text: String, count: Int, format: CopyAsFormat) {
         CopyAsToolkit.copyToClipboard(text: text)
-        report("Copied \(urls.count) item(s) as \(format.rawValue) to clipboard:\n\n\(text)", title: "Copied to Clipboard")
+        report("Copied \(count) item(s) as \(format.rawValue) to clipboard:\n\n\(text)",
+               title: "Copied to Clipboard")
     }
 
     private func runAdvancedRename(paths: [String]) {
