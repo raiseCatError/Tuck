@@ -341,40 +341,10 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
 
     private func runPDFMerge(paths: [String]) {
         let urls = paths.map { URL(fileURLWithPath: $0) }
-        let progress = ProgressWindow()
-        let cancelled = CancellationFlag()
-        progress.present(title: "Merging into PDF", onCancel: { cancelled.cancel() })
-
-        Task.detached(priority: .userInitiated) { [weak self] in
-            do {
-                let merged = try PDFToolkit.merge(urls: urls, progress: { frac, note in
-                    Task { @MainActor in progress.update(fraction: frac, detail: note) }
-                }, shouldCancel: { cancelled.isCancelled })
-
-                await MainActor.run {
-                    progress.dismiss()
-                    let record = JobRecord(
-                        title: "Merge \(urls.count) item(s) to PDF",
-                        operation: "pdfMerge",
-                        finishedAt: Date(),
-                        status: .completed,
-                        progress: 1.0,
-                        progressDetail: "Created \(merged.lastPathComponent)",
-                        items: paths.map { JobItemStatus(inputPath: $0) },
-                        outputs: [merged.path],
-                        canUndo: true
-                    )
-                    JobManager.shared.recordCompletedJob(record)
-
-                    NSWorkspace.shared.activateFileViewerSelecting([merged])
-                    self?.report("Saved merged document as:\n\(merged.lastPathComponent)", title: "PDF Merged")
-                }
-            } catch {
-                await MainActor.run {
-                    progress.dismiss()
-                    self?.report(error.localizedDescription, title: "PDF Merge Failed")
-                }
-            }
+        queueOperation(title: "Merge into PDF", operation: "pdfMerge", paths: paths) { token, progress in
+            let merged = try PDFToolkit.merge(urls: urls, progress: progress, shouldCancel: { token.isCancelled })
+            if token.isCancelled { throw CancellationError() }
+            return [merged]
         }
     }
 
@@ -382,7 +352,6 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         guard let first = paths.first else { return }
         let url = URL(fileURLWithPath: first)
         var rangeDesc = "each"
-
         if customRange {
             let alert = NSAlert()
             alert.messageText = "Split PDF by Page Range"
@@ -396,241 +365,120 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             rangeDesc = field.stringValue
         }
-
-        let progress = ProgressWindow()
-        let cancelled = CancellationFlag()
-        progress.present(title: "Splitting PDF", onCancel: { cancelled.cancel() })
-
-        Task.detached(priority: .userInitiated) { [weak self] in
-            do {
-                let outputs = try PDFToolkit.split(url: url, rangeDescription: rangeDesc, progress: { frac, note in
-                    Task { @MainActor in progress.update(fraction: frac, detail: note) }
-                }, shouldCancel: { cancelled.isCancelled })
-
-                await MainActor.run {
-                    progress.dismiss()
-                    if !outputs.isEmpty {
-                        let record = JobRecord(
-                            title: "Split PDF (\(outputs.count) pages/parts)",
-                            operation: "pdfSplit",
-                            finishedAt: Date(),
-                            status: .completed,
-                            progress: 1.0,
-                            progressDetail: "Created \(outputs.count) PDF(s)",
-                            items: [JobItemStatus(inputPath: first)],
-                            outputs: outputs.map(\.path),
-                            canUndo: true
-                        )
-                        JobManager.shared.recordCompletedJob(record)
-                        NSWorkspace.shared.activateFileViewerSelecting(outputs)
-                    }
-                    self?.report("Created \(outputs.count) split PDF(s).", title: "PDF Split Complete")
-                }
-            } catch {
-                await MainActor.run {
-                    progress.dismiss()
-                    self?.report(error.localizedDescription, title: "PDF Split Failed")
-                }
-            }
+        let selectedRange = rangeDesc
+        queueOperation(title: "Split PDF", operation: "pdfSplit", paths: [first]) { token, progress in
+            let outputs = try PDFToolkit.split(url: url, rangeDescription: selectedRange,
+                                               progress: progress, shouldCancel: { token.isCancelled })
+            if token.isCancelled { throw CancellationError() }
+            return outputs
         }
     }
 
     private func runPDFRotate(paths: [String], degrees: Int) {
-        let urls = paths.map { URL(fileURLWithPath: $0) }
-        var outputs: [URL] = []
-        for url in urls {
-            if let rotated = try? PDFToolkit.rotate(url: url, degrees: degrees) {
-                outputs.append(rotated)
+        queueOperation(title: "Rotate PDF pages", operation: "pdfRotate", paths: paths) { token, progress in
+            var outputs: [URL] = []
+            for (index, path) in paths.enumerated() {
+                if token.isCancelled { throw CancellationError() }
+                progress(Double(index) / Double(paths.count), URL(fileURLWithPath: path).lastPathComponent)
+                if let output = try? PDFToolkit.rotate(url: URL(fileURLWithPath: path), degrees: degrees) {
+                    outputs.append(output)
+                }
             }
-        }
-        if !outputs.isEmpty {
-            let record = JobRecord(
-                title: "Rotate \(outputs.count) PDF(s) \(degrees)°",
-                operation: "pdfRotate",
-                finishedAt: Date(),
-                status: .completed,
-                progress: 1.0,
-                progressDetail: "Rotated \(outputs.count) file(s)",
-                items: paths.map { JobItemStatus(inputPath: $0) },
-                outputs: outputs.map(\.path),
-                canUndo: true
-            )
-            JobManager.shared.recordCompletedJob(record)
-            NSWorkspace.shared.activateFileViewerSelecting(outputs)
-            report("Rotated \(outputs.count) document(s) by \(degrees)°.", title: "PDF Rotated")
+            guard !outputs.isEmpty else { throw UndoError.unsafe("No PDF pages could be rotated.") }
+            return outputs
         }
     }
 
     private func runPDFOCR(paths: [String]) {
-        let urls = paths.map { URL(fileURLWithPath: $0) }
-        let progress = ProgressWindow()
-        let cancelled = CancellationFlag()
-        progress.present(title: "Running On-Device OCR", onCancel: { cancelled.cancel() })
-
-        Task.detached(priority: .userInitiated) { [weak self] in
+        queueOperation(title: "Recognize PDF text", operation: "pdfOCR", paths: paths) { token, progress in
             var outputs: [URL] = []
-            for (idx, url) in urls.enumerated() {
-                if cancelled.isCancelled { break }
-                let frac = Double(idx) / Double(urls.count)
-                Task { @MainActor in progress.update(fraction: frac, detail: url.lastPathComponent) }
-                if let ocrOutput = try? PDFToolkit.ocr(url: url, progress: { p, n in
-                    Task { @MainActor in progress.update(fraction: frac + (p / Double(urls.count)), detail: n) }
-                }, shouldCancel: { cancelled.isCancelled }) {
-                    outputs.append(ocrOutput)
+            for (index, path) in paths.enumerated() {
+                if token.isCancelled { throw CancellationError() }
+                let start = Double(index) / Double(paths.count)
+                let source = URL(fileURLWithPath: path)
+                if let output = try? PDFToolkit.ocr(url: source, progress: { fraction, note in
+                    progress(start + fraction / Double(paths.count), note)
+                }, shouldCancel: { token.isCancelled }) {
+                    outputs.append(output)
                 }
             }
-            await MainActor.run {
-                progress.dismiss()
-                if !outputs.isEmpty {
-                    let record = JobRecord(
-                        title: "OCR \(outputs.count) PDF(s)",
-                        operation: "pdfOCR",
-                        finishedAt: Date(),
-                        status: .completed,
-                        progress: 1.0,
-                        progressDetail: "Created \(outputs.count) searchable PDF(s)",
-                        items: paths.map { JobItemStatus(inputPath: $0) },
-                        outputs: outputs.map(\.path),
-                        canUndo: true
-                    )
-                    JobManager.shared.recordCompletedJob(record)
-                    NSWorkspace.shared.activateFileViewerSelecting(outputs)
-                }
-                self?.report("Generated \(outputs.count) searchable OCR PDF(s).", title: "OCR Complete")
-            }
+            if token.isCancelled { throw CancellationError() }
+            guard !outputs.isEmpty else { throw UndoError.unsafe("No searchable PDFs could be generated.") }
+            return outputs
         }
     }
 
     private func runPDFExtractImages(paths: [String]) {
-        let urls = paths.map { URL(fileURLWithPath: $0) }
-        var totalImages: [URL] = []
-        for url in urls {
-            if let extracted = try? PDFToolkit.extractImages(url: url) {
-                totalImages.append(contentsOf: extracted)
+        queueOperation(title: "Extract PDF images", operation: "pdfExtractImages", paths: paths) { token, progress in
+            var outputs: [URL] = []
+            for (index, path) in paths.enumerated() {
+                if token.isCancelled { throw CancellationError() }
+                progress(Double(index) / Double(paths.count), URL(fileURLWithPath: path).lastPathComponent)
+                if let files = try? PDFToolkit.extractImages(url: URL(fileURLWithPath: path)) {
+                    outputs.append(contentsOf: files)
+                }
             }
-        }
-        if !totalImages.isEmpty {
-            let record = JobRecord(
-                title: "Extract Images (\(totalImages.count) assets)",
-                operation: "pdfExtractImages",
-                finishedAt: Date(),
-                status: .completed,
-                progress: 1.0,
-                progressDetail: "Extracted \(totalImages.count) asset(s)",
-                items: paths.map { JobItemStatus(inputPath: $0) },
-                outputs: totalImages.map(\.path),
-                canUndo: true
-            )
-            JobManager.shared.recordCompletedJob(record)
-            NSWorkspace.shared.activateFileViewerSelecting(totalImages)
-            report("Extracted \(totalImages.count) image assets.", title: "Images Extracted")
-        } else {
-            report("No image assets could be extracted.", title: "Image Extraction")
+            guard !outputs.isEmpty else { throw UndoError.unsafe("No embedded images could be extracted.") }
+            return outputs
         }
     }
 
     private func runPDFToImages(paths: [String]) {
-        let urls = paths.map { URL(fileURLWithPath: $0) }
-        var totalImages: [URL] = []
-        for url in urls {
-            if let rendered = try? PDFToolkit.renderPagesToImages(url: url) {
-                totalImages.append(contentsOf: rendered)
+        queueOperation(title: "Export PDF pages as images", operation: "pdfToImages", paths: paths) { token, progress in
+            var outputs: [URL] = []
+            for (index, path) in paths.enumerated() {
+                if token.isCancelled { throw CancellationError() }
+                progress(Double(index) / Double(paths.count), URL(fileURLWithPath: path).lastPathComponent)
+                if let files = try? PDFToolkit.renderPagesToImages(url: URL(fileURLWithPath: path)) {
+                    outputs.append(contentsOf: files)
+                }
             }
-        }
-        if !totalImages.isEmpty {
-            let record = JobRecord(
-                title: "Render Pages to Images (\(totalImages.count) pages)",
-                operation: "pdfToImages",
-                finishedAt: Date(),
-                status: .completed,
-                progress: 1.0,
-                progressDetail: "Rendered \(totalImages.count) page(s)",
-                items: paths.map { JobItemStatus(inputPath: $0) },
-                outputs: totalImages.map(\.path),
-                canUndo: true
-            )
-            JobManager.shared.recordCompletedJob(record)
-            NSWorkspace.shared.activateFileViewerSelecting(totalImages)
-            report("Rendered \(totalImages.count) page image(s).", title: "Pages Converted")
+            guard !outputs.isEmpty else { throw UndoError.unsafe("No pages could be rendered.") }
+            return outputs
         }
     }
 
     // MARK: - Image Toolkit Handlers
 
     private func runImageConvert(paths: [String], targetFormat: String) {
-        let urls = paths.map { URL(fileURLWithPath: $0) }
-        var outputs: [URL] = []
-        var failures: [String] = []
-
-        for url in urls {
-            do {
-                let converted = try ImageToolkit.convert(url: url, targetFormat: targetFormat)
-                outputs.append(converted)
-            } catch {
-                failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
+        queueOperation(title: "Convert images to \(targetFormat.uppercased())", operation: "imageConvert", paths: paths) { token, progress in
+            var outputs: [URL] = []
+            for (index, path) in paths.enumerated() {
+                if token.isCancelled { throw CancellationError() }
+                let url = URL(fileURLWithPath: path)
+                progress(Double(index) / Double(paths.count), url.lastPathComponent)
+                if let output = try? ImageToolkit.convert(url: url, targetFormat: targetFormat) {
+                    outputs.append(output)
+                }
             }
-        }
-
-        if !outputs.isEmpty {
-            let record = JobRecord(
-                title: "Convert to \(targetFormat.uppercased())",
-                operation: "imageConvert",
-                finishedAt: Date(),
-                status: .completed,
-                progress: 1.0,
-                progressDetail: "Converted \(outputs.count) file(s)",
-                items: paths.map { JobItemStatus(inputPath: $0) },
-                outputs: outputs.map(\.path),
-                canUndo: true
-            )
-            JobManager.shared.recordCompletedJob(record)
-            NSWorkspace.shared.activateFileViewerSelecting(outputs)
-        }
-        if !failures.isEmpty {
-            report(failures.joined(separator: "\n"), title: "Conversion Issues")
-        } else if !outputs.isEmpty {
-            report("Converted \(outputs.count) image(s) to \(targetFormat.uppercased()).", title: "Conversion Finished")
+            guard !outputs.isEmpty else { throw UndoError.unsafe("No images could be converted.") }
+            return outputs
         }
     }
 
     private func runImageResize(paths: [String], spec: String) {
-        let urls = paths.map { URL(fileURLWithPath: $0) }
         let mode: ResizeMode
         if spec.hasPrefix("pct:") {
-            let pct = Double(spec.dropFirst(4)) ?? 50.0
-            mode = .percentage(pct)
+            mode = .percentage(Double(spec.dropFirst(4)) ?? 50)
         } else if spec.contains("x") {
-            let parts = spec.components(separatedBy: "x")
-            let w = parts.first.flatMap(Int.init) ?? 800
-            let h = parts.last.flatMap(Int.init) ?? 600
-            mode = .exact(width: w, height: h)
+            let dims = spec.components(separatedBy: "x")
+            mode = .exact(width: dims.first.flatMap(Int.init) ?? 800,
+                          height: dims.last.flatMap(Int.init) ?? 600)
         } else if let edge = Int(spec) {
             mode = .longestEdge(edge)
         } else {
             mode = .percentage(50)
         }
-
-        var outputs: [URL] = []
-        for url in urls {
-            if let resized = try? ImageToolkit.resize(url: url, mode: mode) {
-                outputs.append(resized)
+        queueOperation(title: "Resize images", operation: "imageResize", paths: paths) { token, progress in
+            var outputs: [URL] = []
+            for (index, path) in paths.enumerated() {
+                if token.isCancelled { throw CancellationError() }
+                let url = URL(fileURLWithPath: path)
+                progress(Double(index) / Double(paths.count), url.lastPathComponent)
+                if let output = try? ImageToolkit.resize(url: url, mode: mode) { outputs.append(output) }
             }
-        }
-        if !outputs.isEmpty {
-            let record = JobRecord(
-                title: "Resize \(outputs.count) image(s)",
-                operation: "imageResize",
-                finishedAt: Date(),
-                status: .completed,
-                progress: 1.0,
-                progressDetail: "Resized \(outputs.count) image(s)",
-                items: paths.map { JobItemStatus(inputPath: $0) },
-                outputs: outputs.map(\.path),
-                canUndo: true
-            )
-            JobManager.shared.recordCompletedJob(record)
-            NSWorkspace.shared.activateFileViewerSelecting(outputs)
-            report("Resized \(outputs.count) image(s).", title: "Resize Complete")
+            guard !outputs.isEmpty else { throw UndoError.unsafe("No images could be resized.") }
+            return outputs
         }
     }
 
@@ -643,28 +491,16 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
     }
 
     private func runMetadataStrip(paths: [String]) {
-        let urls = paths.map { URL(fileURLWithPath: $0) }
-        var outputs: [URL] = []
-        for url in urls {
-            if let stripped = try? MetadataToolkit.strip(url: url) {
-                outputs.append(stripped)
+        queueOperation(title: "Strip file metadata", operation: "metaStrip", paths: paths) { token, progress in
+            var outputs: [URL] = []
+            for (index, path) in paths.enumerated() {
+                if token.isCancelled { throw CancellationError() }
+                let url = URL(fileURLWithPath: path)
+                progress(Double(index) / Double(paths.count), url.lastPathComponent)
+                if let output = try? MetadataToolkit.strip(url: url) { outputs.append(output) }
             }
-        }
-        if !outputs.isEmpty {
-            let record = JobRecord(
-                title: "Strip Metadata (\(outputs.count) files)",
-                operation: "metaStrip",
-                finishedAt: Date(),
-                status: .completed,
-                progress: 1.0,
-                progressDetail: "Stripped \(outputs.count) file(s)",
-                items: paths.map { JobItemStatus(inputPath: $0) },
-                outputs: outputs.map(\.path),
-                canUndo: true
-            )
-            JobManager.shared.recordCompletedJob(record)
-            NSWorkspace.shared.activateFileViewerSelecting(outputs)
-            report("Created \(outputs.count) stripped file(s) with clean metadata.", title: "Metadata Stripped")
+            guard !outputs.isEmpty else { throw UndoError.unsafe("No metadata-cleaned copies could be created.") }
+            return outputs
         }
     }
 
