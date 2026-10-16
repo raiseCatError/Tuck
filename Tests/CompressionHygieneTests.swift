@@ -48,7 +48,8 @@ struct CompressionHygieneTests {
         assert(result.failures.isEmpty, "Every input in the batch must be processed.")
         assert(result.results.count == 17, "Compression must not truncate at 16 inputs.")
         assert(result.results.allSatisfy { $0.resultBytes < 1_000_000 })
-        assert(try CopyAsToolkit.sha256(url: image) == originalHash)
+        let unchangedHash = try CopyAsToolkit.sha256(url: image)
+        assert(unchangedHash == originalHash)
 
         let inputs = (0..<17).map { index -> URL in
             let url = dir.appendingPathComponent("archive-\(index).txt")
