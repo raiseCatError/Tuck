@@ -50,6 +50,9 @@ enum FileWork {
     static func zip(_ paths: [String],
                     progress: @Sendable @escaping (Double) -> Void,
                     shouldCancel: @Sendable @escaping () -> Bool) throws -> (file: URL, strategy: String) {
+        guard !paths.isEmpty else {
+            throw TuckFailure.invalidInput("Select at least one file or folder.")
+        }
         let first = URL(fileURLWithPath: paths[0])
         let outcome = try ZipEngine.archive(paths: paths, beside: first, progress: progress, shouldCancel: shouldCancel)
         progress(1)

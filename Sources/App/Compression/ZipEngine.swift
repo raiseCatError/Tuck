@@ -26,8 +26,8 @@ enum ZipEngine {
         guard let first = paths.first else {
             throw CompressionFailure.invalidInput("Select one or more files or folders.")
         }
-        guard paths.count <= 16 else {
-            throw CompressionFailure.invalidInput("Select up to sixteen items.")
+        guard paths.count <= 256 else {
+            throw CompressionFailure.invalidInput("Select up to 256 items.")
         }
         let urls = paths.map { URL(fileURLWithPath: $0) }
         for url in urls where !fm.fileExists(atPath: url.path) {
@@ -48,8 +48,8 @@ enum ZipEngine {
 
         if let sevenZip {
             progress(0.3)
-            if let outcome = withSevenZip(sevenZip, urls: urls, parent: parent, work: work, shouldCancel: shouldCancel) {
-                let published = try OutputName.publish(outcome.file, beside: sourceURL)
+            if let outcome = try withSevenZip(sevenZip, urls: urls, parent: parent, work: work, shouldCancel: shouldCancel) {
+                let published = try OutputName.publish(outcome.file, beside: sourceURL, suffix: "-archive", extraExtension: "zip")
                 progress(0.95)
                 return Outcome(file: published, bytes: outcome.bytes, strategy: outcome.strategy)
             }
@@ -57,7 +57,7 @@ enum ZipEngine {
         }
         progress(0.5)
         let outcome = try withDitto(urls: urls, source: sourceURL, work: work, shouldCancel: shouldCancel)
-        let published = try OutputName.publish(outcome.file, beside: sourceURL)
+        let published = try OutputName.publish(outcome.file, beside: sourceURL, suffix: "-archive", extraExtension: "zip")
         progress(0.95)
         return Outcome(file: published, bytes: outcome.bytes, strategy: outcome.strategy)
     }
@@ -66,16 +66,24 @@ enum ZipEngine {
     /// `-spf` is deliberately not used; timestamps and the Unix mode bits are
     /// stored by the ZIP writer.
     private static func withSevenZip(_ tool: Tool, urls: [URL], parent: URL, work: WorkArea,
-                                     shouldCancel: @escaping @Sendable () -> Bool) -> Outcome? {
+                                     shouldCancel: @escaping @Sendable () -> Bool) throws -> Outcome? {
         let temporary = work.makeTemporary("archive", extension: "zip")
-        var arguments = ["a", "-tzip", "-mx=9", "-mmt=on", "-snl", "-bd", "-y", temporary.path]
+        var arguments = ["a", "-tzip", "-mx=9", "-mmt=2", "-snl", "-bd", "-y", temporary.path, "--"]
         if urls.count == 1 {
             arguments.append(urls[0].lastPathComponent)
         } else {
             arguments.append(contentsOf: urls.map(\.lastPathComponent))
         }
-        guard (try? Toolchain.run(tool, arguments, timeout: 900, shouldCancel: shouldCancel,
-                                  workingDirectory: parent)) != nil else {
+        do {
+            try Toolchain.run(tool, arguments, timeout: 900, shouldCancel: shouldCancel,
+                              workingDirectory: parent)
+        } catch ToolError.cancelled {
+            work.discard(temporary)
+            throw CompressionFailure.cancelled
+        } catch ToolError.timedOut {
+            work.discard(temporary)
+            throw CompressionFailure.invalidInput("7-Zip timed out; the archive was not published.")
+        } catch {
             work.discard(temporary)
             return nil
         }
@@ -85,39 +93,37 @@ enum ZipEngine {
         return Outcome(file: temporary, bytes: bytes, strategy: "7-Zip Deflate (max)")
     }
 
-    /// macOS ditto, the native fallback that keeps resource forks and metadata.
+    /// Native ZIP fallback. Runs through the shared process supervisor so
+    /// cancellation and timeout work for both ditto and zip.
     private static func withDitto(urls: [URL], source: URL, work: WorkArea,
                                   shouldCancel: @escaping @Sendable () -> Bool) throws -> Outcome {
         let temporary = work.makeTemporary("archive", extension: "zip")
-        let ditto = URL(fileURLWithPath: "/usr/bin/ditto")
-        let zip = URL(fileURLWithPath: "/usr/bin/zip")
-        let fm = FileManager.default
+        let arguments: [String]
+        let command: Tool
+        let workingDirectory: URL?
         if urls.count == 1 {
-            let process = Process()
-            process.executableURL = ditto
-            process.arguments = ["-c", "-k", "--sequesterRsrc", "--keepParent",
-                                 urls[0].path, temporary.path]
-            try process.run()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else {
-                throw CompressionFailure.unreadableSource("The system archiver could not read this item.")
-            }
+            command = Tool(name: "ditto", url: URL(fileURLWithPath: "/usr/bin/ditto"))
+            arguments = ["-c", "-k", "--sequesterRsrc", "--keepParent",
+                         urls[0].path, temporary.path]
+            workingDirectory = nil
         } else {
-            let parent = source.deletingLastPathComponent()
-            let process = Process()
-            process.executableURL = zip
-            process.currentDirectoryURL = parent
-            process.arguments = ["-r", "-X", "-q", temporary.path, "--"] + urls.map(\.lastPathComponent)
-            try process.run()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else {
-                throw CompressionFailure.unreadableSource("The system archiver could not read these items.")
-            }
+            command = Tool(name: "zip", url: URL(fileURLWithPath: "/usr/bin/zip"))
+            arguments = ["-r", "-y", "-X", "-q", temporary.path, "--"] + urls.map(\.lastPathComponent)
+            workingDirectory = source.deletingLastPathComponent()
+        }
+        do {
+            try Toolchain.run(command, arguments, timeout: 900,
+                              shouldCancel: shouldCancel, workingDirectory: workingDirectory)
+        } catch ToolError.cancelled {
+            throw CompressionFailure.cancelled
+        } catch ToolError.timedOut {
+            throw CompressionFailure.invalidInput("The system archiver timed out.")
+        } catch {
+            throw CompressionFailure.unreadableSource(
+                "The system archiver failed: \(error.localizedDescription)")
         }
         let bytes = ImageFacts.byteSize(temporary)
         guard bytes > 0 else { throw CompressionFailure.corruptedSource("The archive came out empty.") }
-        _ = work.track(temporary)
-        _ = fm
-        return Outcome(file: temporary, bytes: bytes, strategy: "macOS ditto")
+        return Outcome(file: temporary, bytes: bytes, strategy: "macOS ZIP")
     }
 }

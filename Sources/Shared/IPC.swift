@@ -28,7 +28,7 @@ struct TuckRequest: Codable, Sendable {
 
     init(operation: String, paths: [String], argument: String? = nil) {
         self.operation = operation
-        self.paths = Array(paths.prefix(256))
+        self.paths = paths
         self.argument = argument
         self.timestamp = Int64(Date().timeIntervalSince1970)
         self.nonce = UUID().uuidString
@@ -39,6 +39,7 @@ struct TuckRequest: Codable, Sendable {
             TuckLog.ipcLogger.error("ipc.prepare-failed op=\(self.operation, privacy: .public) reason=missing-shared-key")
             return nil
         }
+        guard paths.count <= 256 else { return nil }
         guard let payload = try? JSONEncoder().encode(self) else {
             TuckLog.ipcLogger.error("ipc.prepare-failed op=\(self.operation, privacy: .public) reason=encode-failed")
             return nil

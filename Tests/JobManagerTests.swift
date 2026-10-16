@@ -39,9 +39,12 @@ struct JobManagerTests {
 
         manager.setQueuePaused(true)
         var ids: [UUID] = []
+        var queuedCancelCallbacks = 0
         for index in 0..<3 {
             let id = manager.enqueue(title: "Test \(index)", operation: "test", paths: ["/tmp/test"],
-                                     canUndo: false) { token, progress in
+                                     canUndo: false, onComplete: { record in
+                if index == 1 && record.status == .cancelled { queuedCancelCallbacks += 1 }
+            }) { token, progress in
                 probe.enter(index)
                 defer { probe.leave() }
                 progress(0.5, "Working")
@@ -53,6 +56,7 @@ struct JobManagerTests {
         }
         assert(manager.jobs.filter { $0.status == .queued }.count == 3)
         manager.cancel(jobId: ids[1])
+        assert(queuedCancelCallbacks == 1, "Queued cancellation must notify the progress UI.")
         assert(manager.jobs.first(where: { $0.id == ids[1] })?.status == .cancelled)
         manager.setQueuePaused(false)
 

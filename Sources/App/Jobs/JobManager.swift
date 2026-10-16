@@ -62,19 +62,6 @@ final class JobManager: ObservableObject {
         }
     }
 
-    /// Legacy callers may still finish work outside the queue. Protect any
-    /// generated output before enabling Undo; previous history entries cannot
-    /// acquire evidence retroactively.
-    func recordCompletedJob(_ record: JobRecord) {
-        var recorded = record
-        let wantsUndo = record.canUndo && !record.outputs.isEmpty
-        recorded.canUndo = false
-        recorded.outputProofs = nil
-        jobs.insert(recorded, at: 0)
-        persistHistory()
-        if wantsUndo { fingerprintOutputs(jobId: recorded.id, paths: recorded.outputs) }
-    }
-
     @discardableResult
     func enqueue(title: String, operation: String, paths: [String],
                  canUndo: Bool = true,
@@ -221,10 +208,12 @@ final class JobManager: ObservableObject {
             jobs[index].finishedAt = Date()
             jobs[index].progressDetail = "Cancelled before starting"
             executors.removeValue(forKey: jobId)
-            completions.removeValue(forKey: jobId)
             cancelTokens.removeValue(forKey: jobId)
             undoRequested.remove(jobId)
             persistHistory()
+            // Queued cancellation must dismiss the operation's progress window
+            // just like the normal worker completion path.
+            completions.removeValue(forKey: jobId)?(jobs[index])
             drainQueue()
         } else {
             jobs[index].progressDetail = "Cancellation requested…"

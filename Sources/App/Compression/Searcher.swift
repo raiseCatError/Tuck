@@ -84,9 +84,15 @@ enum Searcher {
                 outcome.bestBytes = max(outcome.bestBytes, candidate.bytes)
                 outcome.bestStrategy = candidate.strategy
                 if fidelity > bestFidelity {
+                    // Only the leading candidate must survive until publishing.
+                    if let previous = best, previous.file != candidate.file {
+                        work.discard(previous.file)
+                    }
                     bestFidelity = fidelity
                     best = candidate
                     if attempt.lossless { break }
+                } else {
+                    work.discard(candidate.file)
                 }
                 // A smaller image only earns its place if it is measurably better.
                 if bestFidelity >= policy.excellentEnough { break }
@@ -117,7 +123,9 @@ enum Searcher {
             guard !policy.shouldCancel() else { return nil }
             budget += 1
             guard let attempt = try? maker.encode(image: image, quality: maker.maximumQuality, into: work) else { return nil }
-            return attempt.bytes < target.maxBytes ? attempt : nil
+            if attempt.bytes < target.maxBytes { return attempt }
+            work.discard(attempt.file)
+            return nil
         }
 
         var low = 0.05, high = maker.maximumQuality
@@ -128,9 +136,13 @@ enum Searcher {
             guard let attempt = try? maker.encode(image: image, quality: middle, into: work) else { break }
             budget += 1
             if attempt.bytes < target.maxBytes {
+                if let previous = best, previous.file != attempt.file {
+                    work.discard(previous.file)
+                }
                 best = attempt
                 low = middle
             } else {
+                work.discard(attempt.file)
                 high = middle
             }
             if high - low < 0.012 { break }
