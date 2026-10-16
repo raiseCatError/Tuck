@@ -147,6 +147,8 @@ final class TuckFinderSync: FIFinderSync {
                 item.submenu = makeCopyAsMenu()
             case .rename:
                 item.action = #selector(advancedRename(_:))
+            case .duplicates:
+                item.action = #selector(findDuplicates(_:))
             }
             root.addItem(item)
         }
@@ -450,6 +452,12 @@ final class TuckFinderSync: FIFinderSync {
         let paths = selection.map(\.path)
         guard !paths.isEmpty else { return }
         dispatch("advancedRename", paths: paths)
+    }
+
+    @objc func findDuplicates(_ sender: NSMenuItem) {
+        let (selection, _) = resolveContext()
+        let folders = selection.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        if !folders.isEmpty { dispatch("findDuplicates", paths: folders.map(\.path)) }
     }
 
     private func dispatch(_ operation: String, paths: [String], argument: String? = nil) {
