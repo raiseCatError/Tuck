@@ -21,7 +21,8 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
     private var sizeRelay: SizeRelay?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        TuckPreferences.prepareKey()
+        let created = TuckPreferences.prepareKey()
+        TuckLog.helperLogger.info("helper.launched pid=\(ProcessInfo.processInfo.processIdentifier) keyCreated=\(created) keyPresent=\(TuckPreferences.sharedKey != nil) settingsArg=\(CommandLine.arguments.contains("--settings"))")
         if CommandLine.arguments.contains("--settings") { showSettings(); return }
         // A Finder-triggered URL may arrive after didFinishLaunching. Never show the
         // settings window for those requests just because the helper wasn't running.
@@ -33,12 +34,22 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         receivedURL = true
+        TuckLog.helperLogger.info("helper.url-received count=\(urls.count)")
         for url in urls {
             if url.host == "settings" { showSettings(); continue }
-            guard let request = TuckRequest.verified(url), !seenRequests.contains(request.nonce) else { continue }
-            seenRequests.insert(request.nonce)
-            if seenRequests.count > 2000 { seenRequests.removeAll(keepingCapacity: true) }
-            handle(request)
+            switch TuckRequest.verify(url) {
+            case .failure(let reason):
+                TuckLog.helperLogger.error("helper.verify-failed reason=\(reason.rawValue, privacy: .public) urlBytes=\(url.absoluteString.utf8.count)")
+            case .success(let request):
+                guard !seenRequests.contains(request.nonce) else {
+                    TuckLog.helperLogger.error("helper.replay-rejected op=\(request.operation, privacy: .public)")
+                    continue
+                }
+                seenRequests.insert(request.nonce)
+                if seenRequests.count > 2000 { seenRequests.removeAll(keepingCapacity: true) }
+                TuckLog.helperLogger.info("helper.verified op=\(request.operation, privacy: .public) paths=\(request.paths.count) argument=\(request.argument != nil, privacy: .public)")
+                handle(request)
+            }
         }
     }
 
@@ -65,35 +76,56 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
     }
 
     private func handle(_ request: TuckRequest) {
+        TuckLog.helperLogger.info("helper.handle op=\(request.operation, privacy: .public) paths=\(request.paths.count)")
         switch request.operation {
         case "newFile", "newFileCustom":
-            guard let first = request.paths.first else { return }
+            guard let first = request.paths.first else {
+                TuckLog.helperLogger.error("helper.handle-aborted op=\(request.operation, privacy: .public) reason=no-path"); return
+            }
             var name = request.argument
             if request.operation == "newFileCustom" { name = promptForName() }
-            guard let name else { return }
+            guard let name else {
+                TuckLog.helperLogger.info("helper.handle-cancelled op=\(request.operation, privacy: .public) reason=dismissed-prompt"); return
+            }
             do {
                 let output = try FileWork.newFile(in: URL(fileURLWithPath: first), name: name)
+                TuckLog.helperLogger.info("helper.result op=\(request.operation, privacy: .public) outcome=created")
                 NSWorkspace.shared.activateFileViewerSelecting([output])
-            } catch { report(error.localizedDescription) }
+            } catch {
+                TuckLog.helperLogger.error("helper.result op=\(request.operation, privacy: .public) outcome=failed detail=\(error.localizedDescription, privacy: .private)")
+                report(error.localizedDescription)
+            }
         case "openWith":
             guard let id = request.argument,
                   TuckMenuModel.editors.contains(where: { $0.1 == id }),
-                  let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) else { return }
+                  let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) else {
+                TuckLog.helperLogger.error("helper.handle-aborted op=openWith reason=app-unavailable"); return
+            }
             let files = request.paths.map { URL(fileURLWithPath: $0) }
             NSWorkspace.shared.open(files, withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration()) { _, error in
-                if let error { Task { @MainActor in self.report(error.localizedDescription) } }
+                if let error {
+                    TuckLog.helperLogger.error("helper.result op=openWith outcome=failed detail=\(error.localizedDescription, privacy: .private)")
+                    Task { @MainActor in self.report(error.localizedDescription) }
+                } else {
+                    TuckLog.helperLogger.info("helper.result op=openWith outcome=opened files=\(files.count)")
+                }
             }
         case "terminal":
-            guard let path = request.paths.first else { return }
+            guard let path = request.paths.first else {
+                TuckLog.helperLogger.error("helper.handle-aborted op=terminal reason=no-path"); return
+            }
             openTerminal(at: path)
         case "compress", "compressCustom":
             var size = request.argument.flatMap(Double.init)
             if request.operation == "compressCustom" { size = promptForSize() }
-            guard let size, (0.1...500).contains(size) else { return }
+            guard let size, (0.1...500).contains(size) else {
+                TuckLog.helperLogger.error("helper.handle-aborted op=\(request.operation, privacy: .public) reason=invalid-size"); return
+            }
             let paths = request.paths
             Task.detached(priority: .userInitiated) { [weak self] in
                 let results = FileWork.compress(paths, targetMB: size)
                 await MainActor.run {
+                    TuckLog.helperLogger.info("helper.result op=\(request.operation, privacy: .public) outputs=\(results.files.count) failures=\(results.errors.count)")
                     if !results.files.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(results.files) }
                     if !results.errors.isEmpty { self?.report(results.errors.joined(separator: "\n")) }
                 }
@@ -103,12 +135,20 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             Task.detached(priority: .userInitiated) { [weak self] in
                 do {
                     let output = try FileWork.zip(paths)
-                    await MainActor.run { NSWorkspace.shared.activateFileViewerSelecting([output]) }
+                    await MainActor.run {
+                        TuckLog.helperLogger.info("helper.result op=zip outcome=created")
+                        NSWorkspace.shared.activateFileViewerSelecting([output])
+                    }
                 } catch {
-                    await MainActor.run { self?.report(error.localizedDescription) }
+                    await MainActor.run {
+                        TuckLog.helperLogger.error("helper.result op=zip outcome=failed detail=\(error.localizedDescription, privacy: .private)")
+                        self?.report(error.localizedDescription)
+                    }
                 }
             }
-        default: return
+        default:
+            TuckLog.helperLogger.error("helper.handle-aborted op=\(request.operation, privacy: .public) reason=unknown-operation")
+            return
         }
     }
 
@@ -116,18 +156,33 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         let id = TuckPreferences.terminal
         if id == "com.mitchellh.ghostty" {
             guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) != nil else {
+                TuckLog.helperLogger.error("helper.result op=terminal outcome=failed reason=ghostty-not-installed")
                 report("Ghostty isn't installed. Choose Terminal.app in Settings."); return
             }
             let task = Process()
             task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
             task.arguments = ["-na", "Ghostty", "--args", "--working-directory=\(path)"]
-            do { try task.run() } catch { report(error.localizedDescription) }
+            do {
+                try task.run()
+                TuckLog.helperLogger.info("helper.result op=terminal outcome=launched app=ghostty")
+            } catch {
+                TuckLog.helperLogger.error("helper.result op=terminal outcome=failed detail=\(error.localizedDescription, privacy: .private)")
+                report(error.localizedDescription)
+            }
         } else {
             // Terminal.app accepts Finder folders through its open-document route.
             let directory = URL(fileURLWithPath: path, isDirectory: true)
-            guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else { return }
+            guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else {
+                TuckLog.helperLogger.error("helper.result op=terminal outcome=failed reason=terminal-not-found")
+                return
+            }
             NSWorkspace.shared.open([directory], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { _, error in
-                if let error { Task { @MainActor in self.report(error.localizedDescription) } }
+                if let error {
+                    TuckLog.helperLogger.error("helper.result op=terminal outcome=failed detail=\(error.localizedDescription, privacy: .private)")
+                    Task { @MainActor in self.report(error.localizedDescription) }
+                } else {
+                    TuckLog.helperLogger.info("helper.result op=terminal outcome=launched app=Terminal")
+                }
             }
         }
     }
@@ -174,6 +229,7 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
     }
 
     private func report(_ message: String) {
+        TuckLog.helperLogger.error("helper.reported detail=\(message, privacy: .private)")
         let alert = NSAlert()
         alert.messageText = "Tuck"
         alert.informativeText = message

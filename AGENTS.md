@@ -3,6 +3,8 @@
 - Personal-use Swift 6 macOS app. Keep changes lean; no external runtime dependencies.
 - Finder Sync extension is sandboxed and **never writes files directly**. The invisible host app owns all file operations.
 - The extension authenticates expiring operation payloads using a per-install key in the shared preference domain. Do not add unsigned URL operations or change file operations to shell-interpolated commands.
+- Never force unwrap `UserDefaults(suiteName:)`. Foundation returns nil when the suite name equals the running bundle identifier, which is exactly the helper's own domain; `TuckPreferences.resolveStore` handles it and `Tests/PreferencesTests.swift` guards it.
+- Action lifecycle diagnostics live in `Sources/Shared/Log.swift`. Watch them with `log stream --level info --predicate 'subsystem == "dev.raisecaterror.tuck"'`; `scripts/verify-ipc.sh` exercises the authenticated hop without the Finder UI. Never log keys, signatures, full URLs or file paths.
 - Menu order, enabled actions, and size presets are in `Sources/Shared/Preferences.swift`. Both extension and Settings must use the same models.
 - The Desktop blank context and selection context must be tested independently on macOS 27, including mounted volumes and cloud-provider folders.
 - No NSMenuItem custom views: Finder Sync supports standard items/submenus, not custom slider controls. Custom size uses a transient native alert, not a full-window workflow.

@@ -167,9 +167,9 @@ enum FileWork {
         for factor in [1.0, 0.88, 0.76, 0.64, 0.52, 0.40, 0.30, 0.20] {
             let side = max(96, Int(Double(maximum) * factor))
             let settings: [String: Any] = [
-                kCGImageSourceCreateThumbnailFromImageAlways as! String: true,
-                kCGImageSourceCreateThumbnailWithTransform as! String: true,
-                kCGImageSourceThumbnailMaxPixelSize as! String: side
+                kCGImageSourceCreateThumbnailFromImageAlways as String: true,
+                kCGImageSourceCreateThumbnailWithTransform as String: true,
+                kCGImageSourceThumbnailMaxPixelSize as String: side
             ]
             guard let frame = CGImageSourceCreateThumbnailAtIndex(input, 0, settings as CFDictionary) else { continue }
             if preservePNG {
@@ -202,7 +202,7 @@ enum FileWork {
     private static func encode(_ image: CGImage, type: CFString, quality: Double) -> Data? {
         let buffer = NSMutableData()
         guard let dest = CGImageDestinationCreateWithData(buffer, type, 1, nil) else { return nil }
-        let options: [String: Any] = [kCGImageDestinationLossyCompressionQuality as! String: quality]
+        let options: [String: Any] = [kCGImageDestinationLossyCompressionQuality as String: quality]
         CGImageDestinationAddImage(dest, image, options as CFDictionary)
         guard CGImageDestinationFinalize(dest) else { return nil }
         return buffer as Data

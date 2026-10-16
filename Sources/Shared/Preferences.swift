@@ -4,7 +4,23 @@ import Foundation
 // The settings app owns all writes. No App Group or paid developer account needed.
 enum TuckPreferences {
     static let domain = "dev.raisecaterror.tuck"
-    static var store: UserDefaults { UserDefaults(suiteName: domain)! }
+
+    // Foundation refuses a suite name that equals the running bundle identifier
+    // ("Using your own bundle identifier as an NSUserDefaults suite name does not
+    // make sense and will not work") and returns nil for it. The helper therefore
+    // resolves the store instead of force unwrapping, and falls back to the standard
+    // domain, which for the helper is the very same preference file.
+    static var store: UserDefaults { resolveStore() }
+
+    static func resolveStore(domain: String = TuckPreferences.domain,
+                             bundleIdentifier: String? = Bundle.main.bundleIdentifier) -> UserDefaults {
+        if bundleIdentifier == domain { return .standard }
+        guard let suite = UserDefaults(suiteName: domain) else {
+            TuckLog.extensionLogger.error("preferences.suite-unavailable domain=\(domain, privacy: .public) bundle=\(bundleIdentifier ?? "none", privacy: .public)")
+            return .standard
+        }
+        return suite
+    }
 
     static let defaults: [String] = ["newFile", "openWith", "compress", "terminal"]
 
@@ -48,13 +64,15 @@ enum TuckPreferences {
         return Data(base64Encoded: encoded)
     }
 
-    static func prepareKey() {
-        guard sharedKey == nil else { return }
+    static func prepareKey() -> Bool {
+        guard sharedKey == nil else { return false }
         var data = Data(count: 32)
         data.withUnsafeMutableBytes { buffer in
             guard let ptr = buffer.baseAddress else { return }
             arc4random_buf(ptr, buffer.count)
         }
         store.set(data.base64EncodedString(), forKey: "ipcKey")
+        TuckLog.ipcLogger.info("preferences.key-created bytes=\(data.count)")
+        return true
     }
 }
