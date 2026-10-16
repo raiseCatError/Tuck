@@ -4,6 +4,7 @@ public struct ZipEntry: Identifiable, Sendable {
     public let name: String
     public let uncompressed: UInt64
     public let compressed: UInt64
+    public let modified: Date?
     public let isDirectory: Bool
     public var id: String { name }
 }
@@ -84,6 +85,8 @@ public enum ZipInspector {
             guard uint(metadata, position, 4) == 0x02014b50,
                   let flags = uint(metadata, position + 8, 2),
                   let method = uint(metadata, position + 10, 2),
+                  let dosTime = uint(metadata, position + 12, 2),
+                  let dosDate = uint(metadata, position + 14, 2),
                   let compressed = uint(metadata, position + 20, 4),
                   let uncompressed = uint(metadata, position + 24, 4),
                   let nameLen = uint(metadata, position + 28, 2),
@@ -125,8 +128,16 @@ public enum ZipInspector {
             guard unique.insert(comparison).inserted else {
                 throw Invalid.malformed("Archive contains colliding or duplicated filenames.")
             }
+            let modified = DateComponents(calendar: Calendar(identifier: .gregorian),
+                year: 1980 + Int((dosDate >> 9) & 0x7F),
+                month: Int((dosDate >> 5) & 0x0F),
+                day: Int(dosDate & 0x1F),
+                hour: Int((dosTime >> 11) & 0x1F),
+                minute: Int((dosTime >> 5) & 0x3F),
+                second: Int(dosTime & 0x1F) * 2).date
             result.append(ZipEntry(name: name, uncompressed: uncompressed,
-                                   compressed: compressed, isDirectory: name.hasSuffix("/")))
+                                   compressed: compressed, modified: modified,
+                                   isDirectory: name.hasSuffix("/")))
             position = endOfRecord
         }
         guard result.count == entries else { throw Invalid.malformed("Incomplete ZIP directory.") }
