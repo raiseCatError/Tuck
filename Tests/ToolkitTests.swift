@@ -69,7 +69,14 @@ struct ToolkitTests {
         assert(FileManager.default.fileExists(atPath: images[0].path))
 
         let extracted = try! PDFToolkit.extractImages(url: pdf)
-        assert(!extracted.isEmpty)
+        if FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/pdfimages") {
+            assert(!extracted.isEmpty, "The image-backed test PDF should expose embedded image assets.")
+        } else {
+            // Without Poppler's pdfimages, authentic extraction is unavailable.
+            // Rendering pages is a distinct operation and must not be substituted.
+            assert(extracted.isEmpty)
+            print("   - Embedded extraction skipped: pdfimages not installed")
+        }
         print("   ✓ PDF Page Rendering & Image Extraction verified")
     }
 

@@ -1,0 +1,28 @@
+name: Tuck focused PR verification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "Sources/**"
+      - "Tests/**"
+      - "scripts/**"
+      - ".github/workflows/tuck-pr-check.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: tuck-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-build-and-tests:
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift 6 model, IPC, toolkit and job tests
+        run: ./scripts/test-model.sh
+      - name: Build and ad-hoc sign Tuck and Finder extension
+        run: ./scripts/build.sh "$RUNNER_TEMP/tuck-build"
