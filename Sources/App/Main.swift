@@ -176,6 +176,8 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
 
         case "customAction":
             runCustomAction(paths: request.paths, argument: request.argument)
+        case "runRecipe":
+            runSavedRecipe(paths: request.paths, argument: request.argument)
 
         case "copyTo", "moveTo":
             runTransfer(paths: request.paths, argument: request.argument,
@@ -655,6 +657,26 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         CopyAsToolkit.copyToClipboard(text: text)
         report("Copied \(count) item(s) as \(format.rawValue) to clipboard:\n\n\(text)",
                title: "Copied to Clipboard")
+    }
+
+    private func runSavedRecipe(paths: [String], argument: String?) {
+        guard let raw = argument, let id = UUID(uuidString: raw),
+              let recipe = RecipePreferences.all.first(where: { $0.id == id }) else {
+            report("The saved recipe is missing or invalid.", title: "Recipe Unavailable")
+            return
+        }
+        let prompt = NSAlert()
+        prompt.messageText = "Run \(recipe.title) on \(paths.count) item(s)?"
+        prompt.informativeText = recipe.steps.map { $0.title }.joined(separator: " → ") +
+            "\n\nOriginals are untouched. Final copies appear in an export folder beside the originals."
+        prompt.addButton(withTitle: "Run Recipe")
+        prompt.addButton(withTitle: "Cancel")
+        guard prompt.runModal() == .alertFirstButtonReturn else { return }
+        queueOperation(title: "Recipe: \(recipe.title)", operation: "runRecipe",
+                       paths: paths, canUndo: true) { token, progress in
+            try RecipeRunner.execute(recipe, paths: paths,
+                                     shouldCancel: { token.isCancelled }, progress: progress)
+        }
     }
 
     private func runCustomAction(paths: [String], argument: String?) {
