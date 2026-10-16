@@ -8,6 +8,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     case destinations = "Destinations"
     case automation = "Automation"
     case recipes = "Recipes"
+    case watchedFolders = "Watched Folders"
     case applications = "Applications"
     case general = "General"
     var id: Self { self }
@@ -19,6 +20,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .destinations: "folder.badge.gearshape"
         case .automation: "bolt.badge.clock"
         case .recipes: "square.stack.3d.up"
+        case .watchedFolders: "folder.badge.clock"
         case .applications: "terminal"
         case .general: "gearshape"
         }
@@ -54,6 +56,7 @@ struct SettingsView: View {
                     case .destinations: FavoriteSettingsView()
                     case .automation: CustomActionsSettingsView()
                     case .recipes: RecipeSettingsView()
+                    case .watchedFolders: WatchedFoldersSettingsView()
                     case .applications: applicationsPane
                     case .general: generalPane
                     }
