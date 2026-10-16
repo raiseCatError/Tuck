@@ -171,6 +171,8 @@ struct SettingsView: View {
             }
         case .rename:
             Button(action.title) { lastPreview = "Advanced Rename → Batch Pattern Rename" }
+        case .zipInspector:
+            Button(action.title) { lastPreview = "Inspect ZIP → Browse / extract entries" }
         }
     }
 
