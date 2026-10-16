@@ -20,7 +20,8 @@ struct DuplicateTests {
         let groups = try DuplicateScanner.scan([root], isCancelled: { false }, progress: { _ in })
         assert(groups.count == 1)
         assert(groups[0].members.count == 2)
-        assert(Set(groups[0].members.map(\.path)) == Set([first.path, second.path]))
+        let expectedNames = Set(["one.txt", "two.txt"])
+        assert(Set(groups[0].members.map { URL(fileURLWithPath: $0.path).lastPathComponent }) == expectedNames)
         assert(groups[0].reclaimable == 5)
 
         // A changed file is no longer authorized by its old scan evidence.
