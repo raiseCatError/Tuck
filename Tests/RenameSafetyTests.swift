@@ -19,7 +19,7 @@ struct RenameSafetyTests {
         let relative = CopyAsToolkit.format(urls: [alpha, beta], format: .relativePath)
         assert(relative == "alpha.txt\nbeta.txt")
         let digest = try CopyAsToolkit.sha256(url: alpha)
-        assert(digest == "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccd8e3568eec7d5fd03f")
+        assert(digest == "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8")
         let filename = CopyAsToolkit.format(urls: [alpha], format: .relativePath)
         assert(filename == "alpha.txt")
 
@@ -45,7 +45,7 @@ struct RenameSafetyTests {
         let collision = AdvancedRenameToolkit.preview(urls: [alpha], rule: rule)
         assert(collision.count == 1 && collision[0].hasCollision)
         let before = try Data(contentsOf: gamma)
-        assert(rejects { try AdvancedRenameToolkit.execute(plan: collision) })
+        assert(rejects { _ = try AdvancedRenameToolkit.execute(plan: collision) })
         let unchanged = try Data(contentsOf: gamma)
         assert(before == unchanged)
 
@@ -54,7 +54,7 @@ struct RenameSafetyTests {
             urls: [beta], rule: .init(op: .prefixSuffix(prefix: "old-", suffix: "")))
         try fm.removeItem(at: beta)
         try Data("replacement".utf8).write(to: beta)
-        assert(rejects { try AdvancedRenameToolkit.execute(plan: renamed) })
+        assert(rejects { _ = try AdvancedRenameToolkit.execute(plan: renamed) })
         let replacement = try String(contentsOf: beta, encoding: .utf8)
         assert(replacement == "replacement")
 
