@@ -47,7 +47,8 @@ final class WatchedFolderManager {
         let recipes = RecipePreferences.all
         for rule in WatchRulePreferences.all where rule.enabled {
             guard recipes.contains(where: { $0.id == rule.recipeID }),
-                  let folder = try? rule.resolveFolder() else { continue }
+                  let folder = try? rule.resolveFolder(),
+                  let baseline = snapshot(folder) else { continue }
             let handle = open(folder.path, O_EVTONLY)
             guard handle >= 0 else { continue }
             let source = DispatchSource.makeFileSystemObjectSource(
@@ -58,10 +59,6 @@ final class WatchedFolderManager {
                 Task { @MainActor in self?.scheduleScan(id: rule.id) }
             }
             source.setCancelHandler { close(handle) }
-            guard let baseline = snapshot(folder) else {
-                source.cancel()
-                continue
-            }
             watches[rule.id] = Watch(rule: rule, folder: folder, source: source,
                                      known: baseline)
             source.resume()
@@ -115,7 +112,8 @@ final class WatchedFolderManager {
         guard let second = snapshot(watch.folder) else { return }
         let recipe = RecipePreferences.all.first { $0.id == watch.rule.recipeID }
         if let recipe {
-            for (path, stamp) in new where second[path] == stamp {
+            for (path, stamp) in new where second[path] == stamp &&
+                stamp.bytes > 0 && Date().timeIntervalSince(stamp.modified) >= 1 {
                 if watches[id]?.known[path] == stamp { continue }
                 let input = path
                 JobManager.shared.enqueue(title: "Watched: \(watch.rule.name)",
