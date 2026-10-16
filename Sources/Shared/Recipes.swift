@@ -36,6 +36,7 @@ struct SavedRecipe: Codable, Sendable, Identifiable {
 }
 
 enum RecipePreferences {
+    static let changed = Notification.Name("TuckSavedRecipesDidChange")
     private static let key = "savedRecipesV1"
     static var all: [SavedRecipe] {
         guard let data = TuckPreferences.store.data(forKey: key),
@@ -51,5 +52,6 @@ enum RecipePreferences {
             throw CocoaError(.fileWriteInvalidFileName)
         }
         TuckPreferences.store.set(try JSONEncoder().encode(recipes), forKey: key)
+        NotificationCenter.default.post(name: changed, object: nil)
     }
 }
