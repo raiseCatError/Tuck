@@ -213,8 +213,10 @@ private struct DuplicatesView: View {
         .confirmationDialog("Move \(selected.count) verified duplicate copies to Trash?",
                             isPresented: $confirmTrash) {
             Button("Move Selected to Trash", role: .destructive) {
-                do { try removeSelected() }
-                catch { errorText = error.localizedDescription; showError = true }
+                Task {
+                    do { try await removeSelected() }
+                    catch { errorText = error.localizedDescription; showError = true }
+                }
             }
         } message: {
             Text("Tuck will refuse to remove every member of a group, and will recheck identities before moving anything.")
@@ -229,26 +231,40 @@ private struct DuplicatesView: View {
         return ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
     }
 
-    private func removeSelected() throws {
-        // Never trash the last surviving copy from a duplicate group.
-        for group in model.groups {
-            let count = group.members.filter { selected.contains($0.path) }.count
-            guard count < group.members.count else {
+    private func removeSelected() async throws {
+        let marked = selected
+        let groups = model.groups
+        // Never trash every member in any group.
+        for group in groups {
+            guard group.members.filter({ marked.contains($0.path) }).count < group.members.count else {
                 throw UndoError.unsafe("At least one copy in every group must remain unselected.")
             }
         }
-        let proofs = model.groups.flatMap(\.members).filter { selected.contains($0.path) }
-        for proof in proofs { try proof.verifyUnchanged() }
-        for proof in proofs {
-            try proof.verifyUnchanged()
-            try FileManager.default.trashItem(at: URL(fileURLWithPath: proof.path),
-                                              resultingItemURL: nil)
-            selected.remove(proof.path)
-        }
-        model.groups = model.groups.compactMap { group in
-            let remaining = group.members.filter { FileManager.default.fileExists(atPath: $0.path) }
-            return remaining.count > 1 ? DuplicateGroup(id: group.id, size: group.size,
-                                                         members: remaining) : nil
+        let proofs = groups.flatMap(\.members).filter { marked.contains($0.path) }
+        guard !proofs.isEmpty else { return }
+        // Full-file identity hashing and Trash I/O run away from the UI actor.
+        let removed = try await Task.detached(priority: .userInitiated) {
+            for proof in proofs { try proof.verifyUnchanged() }
+            var moved: [String] = []
+            for proof in proofs {
+                do {
+                    try proof.verifyUnchanged()
+                    try FileManager.default.trashItem(
+                        at: URL(fileURLWithPath: proof.path), resultingItemURL: nil)
+                    moved.append(proof.path)
+                } catch {
+                    throw UndoError.unsafe(
+                        "Moved \(moved.count) item(s) to Trash before an error. Refresh results and inspect Trash: \(error.localizedDescription)")
+                }
+            }
+            return moved
+        }.value
+        selected.subtract(removed)
+        let removedSet = Set(removed)
+        model.groups = groups.compactMap { group in
+            let remaining = group.members.filter { !removedSet.contains($0.path) }
+            return remaining.count > 1
+                ? DuplicateGroup(id: group.id, size: group.size, members: remaining) : nil
         }
     }
 }
