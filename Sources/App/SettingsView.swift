@@ -5,6 +5,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     case menu = "Menu"
     case compression = "Compression"
     case activity = "Activity"
+    case destinations = "Destinations"
     case applications = "Applications"
     case general = "General"
     var id: Self { self }
@@ -13,6 +14,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .menu: "list.bullet"
         case .compression: "arrow.down.right.and.arrow.up.left"
         case .activity: "clock.arrow.circlepath"
+        case .destinations: "folder.badge.gearshape"
         case .applications: "terminal"
         case .general: "gearshape"
         }
@@ -45,6 +47,7 @@ struct SettingsView: View {
                     case .menu: menuPane
                     case .compression: compressionPane
                     case .activity: activityPane
+                    case .destinations: FavoriteSettingsView()
                     case .applications: applicationsPane
                     case .general: generalPane
                     }
@@ -171,6 +174,8 @@ struct SettingsView: View {
             }
         case .rename:
             Button(action.title) { lastPreview = "Advanced Rename → Batch Pattern Rename" }
+        case .destinations:
+            Button(action.title) { lastPreview = "Copy or Move to a saved destination…" }
         }
     }
 
