@@ -37,7 +37,7 @@ enum Toolchain {
     private static let cache: [String: Tool?] = {
         var result: [String: Tool?] = [:]
         var seen = Set<String>()
-        for name in ["7zz", "7z", "7za", "qpdf", "gs", "oxipng", "pngquant", "cjpegli", "cjpeg", "jpegtran"] {
+        for name in ["7zz", "7z", "7za", "qpdf", "gs", "oxipng", "pngquant", "cjpegli", "cjpeg", "jpegtran", "pdfimages", "cwebp"] {
             seen.insert(name)
             result[name] = resolve(name)
         }
