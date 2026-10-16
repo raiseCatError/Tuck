@@ -49,6 +49,19 @@ struct ZipInspectorTests {
             catch { rejected = true }
             assert(rejected, "Traversal must be refused before extraction.")
         }
+        // unzip interprets entry selections as argv options or filename globs.
+        // Refuse these at inspection instead of broadening a selective extract.
+        let original = [UInt8](try Data(contentsOf: archive))
+        for byte in [UInt8(45), UInt8(42), UInt8(63), UInt8(91)] {
+            var edited = original
+            edited[start] = byte
+            let candidate = tmp.appendingPathComponent("selector-\(Int(byte)).zip")
+            try Data(edited).write(to: candidate)
+            var rejected = false
+            do { _ = try ZipInspector.inspect(candidate) }
+            catch { rejected = true }
+            assert(rejected, "Option-like or wildcard ZIP entry names must be rejected.")
+        }
         print("ZipInspectorTests passed")
     }
 }
