@@ -53,18 +53,18 @@ struct JobManagerTests {
         }
         assert(manager.jobs.filter { $0.status == .queued }.count == 3)
         manager.cancel(jobId: ids[1])
-        assert(manager.jobs.first { $0.id == ids[1] }?.status == .cancelled)
+        assert(manager.jobs.first(where: { $0.id == ids[1] })?.status == .cancelled)
         manager.setQueuePaused(false)
 
         for _ in 0..<100 {
-            if manager.jobs.first { $0.id == ids[0] }?.status == .completed
-                && manager.jobs.first { $0.id == ids[2] }?.status == .completed { break }
+            if manager.jobs.first(where: { $0.id == ids[0] })?.status == .completed
+                && manager.jobs.first(where: { $0.id == ids[2] })?.status == .completed { break }
             try await Task.sleep(nanoseconds: 30_000_000)
         }
         assert(probe.result().0 == 1, "Workers must never overlap")
         assert(probe.result().1 == [0, 2], "Queued jobs must start FIFO; cancelled jobs don't execute")
-        assert(manager.jobs.first { $0.id == ids[0] }?.status == .completed)
-        assert(manager.jobs.first { $0.id == ids[2] }?.status == .completed)
+        assert(manager.jobs.first(where: { $0.id == ids[0] })?.status == .completed)
+        assert(manager.jobs.first(where: { $0.id == ids[2] })?.status == .completed)
 
         // Restarting Tuck must not show orphaned 'Running' forever.
         let interrupted = JobRecord(title: "Interrupted", operation: "test",
