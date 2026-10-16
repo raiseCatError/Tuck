@@ -173,6 +173,9 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         case "inspectZIP":
             ZIPWindow.show(paths: request.paths)
 
+        case "customAction":
+            runCustomAction(paths: request.paths, argument: request.argument)
+
         case "copyTo", "moveTo":
             runTransfer(paths: request.paths, argument: request.argument,
                         mode: request.operation == "moveTo" ? .move : .copy)
@@ -204,7 +207,10 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
                 window.dismiss()
                 switch job.status {
                 case .completed:
-                    self?.report("Created \(job.outputs.count) output file(s). Open Settings → Activity to review results.", title: title)
+                    let summary = job.outputs.isEmpty
+                        ? "Action completed. Open Settings → Activity to review the record."
+                        : "Created \(job.outputs.count) output file(s). Open Settings → Activity to review results."
+                    self?.report(summary, title: title)
                 case .partial:
                     self?.report(job.progressDetail + "\nSee Activity for the failed filenames and reasons.", title: "\(title) partially completed")
                 case .failed:
@@ -648,6 +654,33 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         CopyAsToolkit.copyToClipboard(text: text)
         report("Copied \(count) item(s) as \(format.rawValue) to clipboard:\n\n\(text)",
                title: "Copied to Clipboard")
+    }
+
+    private func runCustomAction(paths: [String], argument: String?) {
+        guard let value = argument, let uuid = UUID(uuidString: value),
+              let action = CustomActionPreferences.all.first(where: { $0.id == uuid }),
+              CustomActionRunner.supports(action, paths: paths) else {
+            report("This custom action is missing, disabled, or incompatible with the selected items.",
+                   title: "Custom Action Unavailable")
+            return
+        }
+        if action.requiresConfirmation {
+            let alert = NSAlert()
+            alert.messageText = "Run \(action.title)?"
+            alert.informativeText = "\(action.kind == .shortcut ? "Shortcut" : "Executable"): \(action.target)\nSelected: \(paths.count) item(s)\n\nOnly run executable code you trust."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Run Action")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        queueOperation(title: "Run \(action.title)", operation: "customAction",
+                       paths: paths, canUndo: false) { token, progress in
+            progress(0, "Running user-configured action…")
+            try CustomActionRunner.execute(action, paths: paths,
+                                           shouldCancel: { token.isCancelled })
+            progress(1, "Action completed")
+            return JobOutcome()
+        }
     }
 
     private func runTransfer(paths: [String], argument: String?, mode: TransferMode) {
