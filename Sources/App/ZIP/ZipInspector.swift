@@ -108,6 +108,30 @@ public enum ZipInspector {
             guard (flags & 0x40) == 0, method == 0 || method == 8 else {
                 throw Invalid.malformed("Unsupported ZIP compression or encryption method.")
             }
+            // ZIP extractors may consult local headers, not just the central
+            // directory. Refuse archives whose two filename/method records
+            // disagree, before invoking an external extraction process.
+            guard local <= start, start - local >= 30 else {
+                throw Invalid.malformed("ZIP local entry overlaps its central directory.")
+            }
+            try handle.seek(toOffset: local)
+            let localHeader = [UInt8](try handle.read(upToCount: 30) ?? Data())
+            guard localHeader.count == 30,
+                  uint(localHeader, 0, 4) == 0x04034b50,
+                  let localFlags = uint(localHeader, 6, 2),
+                  let localMethod = uint(localHeader, 8, 2),
+                  let localNameLength = uint(localHeader, 26, 2),
+                  let localExtraLength = uint(localHeader, 28, 2),
+                  localFlags == flags, localMethod == method,
+                  localNameLength == nameLen,
+                  30 + localNameLength + localExtraLength <= start - local,
+                  compressed <= start - local - 30 - localNameLength - localExtraLength else {
+                throw Invalid.malformed("ZIP local header conflicts with its central directory.")
+            }
+            let localName = try handle.read(upToCount: Int(nameLen)) ?? Data()
+            guard localName == rawName else {
+                throw Invalid.malformed("ZIP local and central filenames disagree.")
+            }
             let mode = (external >> 16) & 0xF000
             guard mode != 0xA000 else {
                 throw Invalid.malformed("ZIP contains symbolic links; extraction refused.")
@@ -153,9 +177,6 @@ public enum ZipInspector {
     public static func extract(archive: URL, destinationFolder: URL,
                                selected: Set<String>?,
                                shouldCancel: @escaping @Sendable () -> Bool = { false }) throws -> URL {
-        let listing = try inspect(archive)
-        let picked = listing.filter { selected?.contains($0.name) ?? true }
-        guard !picked.isEmpty else { throw Invalid.malformed("No ZIP entries selected.") }
         guard !shouldCancel() else { throw CancellationError() }
         let fm = FileManager.default
         let stage = destinationFolder.appendingPathComponent(
@@ -163,10 +184,25 @@ public enum ZipInspector {
         try fm.createDirectory(at: stage, withIntermediateDirectories: false,
                                attributes: [.posixPermissions: 0o700])
         defer { try? fm.removeItem(at: stage) }
+
+        // Never let unzip reread the original after validation: the user or
+        // another process may replace that archive between inspection and
+        // extraction. Only an isolated private snapshot is handed to unzip.
+        let snapshot = stage.appendingPathComponent("validated.zip")
+        try fm.copyItem(at: archive, to: snapshot)
+        guard !shouldCancel() else { throw CancellationError() }
+        let listing = try inspect(snapshot)
+        if let selected, !selected.isSubset(of: Set(listing.map(\.name))) {
+            throw Invalid.malformed("The requested ZIP selection is no longer valid.")
+        }
+        let picked = listing.filter { selected?.contains($0.name) ?? true }
+        guard !picked.isEmpty else { throw Invalid.malformed("No ZIP entries selected.") }
+
+        let contents = stage.appendingPathComponent("contents", isDirectory: true)
+        try fm.createDirectory(at: contents, withIntermediateDirectories: false,
+                               attributes: [.posixPermissions: 0o700])
         let tool = Tool(name: "unzip", url: URL(fileURLWithPath: "/usr/bin/unzip"))
-        // The ZIP location is absolute. Arguments are passed individually,
-        // never interpolated into a shell command.
-        let arguments = ["-qq", "-n", archive.path] + picked.map(\.name) + ["-d", stage.path]
+        let arguments = ["-qq", "-n", snapshot.path] + picked.map(\.name) + ["-d", contents.path]
         do {
             try Toolchain.run(tool, arguments, timeout: 600, shouldCancel: shouldCancel)
         } catch ToolError.cancelled {
@@ -175,7 +211,7 @@ public enum ZipInspector {
         if shouldCancel() { throw CancellationError() }
         let allowed = Set(picked.map(\.name))
         var extractedSize: UInt64 = 0
-        guard let enumerator = fm.enumerator(at: stage, includingPropertiesForKeys:
+        guard let enumerator = fm.enumerator(at: contents, includingPropertiesForKeys:
             [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey], options: []) else {
             throw Invalid.malformed("Cannot inspect extracted files.")
         }
@@ -185,7 +221,7 @@ public enum ZipInspector {
             guard vals.isSymbolicLink != true else {
                 throw Invalid.malformed("Unexpected symbolic link after ZIP extraction.")
             }
-            let rootComponents = stage.standardizedFileURL.pathComponents
+            let rootComponents = contents.standardizedFileURL.pathComponents
             let fileComponents = file.standardizedFileURL.pathComponents
             guard fileComponents.starts(with: rootComponents) else {
                 throw Invalid.malformed("Extraction escaped the staging folder.")
@@ -209,7 +245,7 @@ public enum ZipInspector {
         let name = archive.deletingPathExtension().lastPathComponent
         let output = destinationFolder.appendingPathComponent(
             "\(name)-extracted-\(UUID().uuidString.prefix(8))", isDirectory: true)
-        try fm.moveItem(at: stage, to: output)
+        try fm.moveItem(at: contents, to: output)
         return output
     }
 }
