@@ -114,6 +114,8 @@ final class TuckFinderSync: FIFinderSync {
         let imageExts = ["jpg", "jpeg", "png", "heic", "tif", "tiff", "bmp", "webp", "gif"]
         if kind == .contextualMenuForContainer {
             context = target?.standardizedFileURL.path == FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop").path ? .desktop : .folder
+        } else if !selection.isEmpty && selection.allSatisfy({ $0.pathExtension.lowercased() == "zip" }) {
+            context = .archive
         } else if !selection.isEmpty && selection.allSatisfy({ $0.pathExtension.lowercased() == "pdf" }) {
             context = .pdf
         } else if !selection.isEmpty && selection.allSatisfy({ imageExts.contains($0.pathExtension.lowercased()) }) {
@@ -147,6 +149,8 @@ final class TuckFinderSync: FIFinderSync {
                 item.submenu = makeCopyAsMenu()
             case .rename:
                 item.action = #selector(advancedRename(_:))
+            case .zipInspector:
+                item.action = #selector(inspectZIP(_:))
             }
             root.addItem(item)
         }
@@ -450,6 +454,12 @@ final class TuckFinderSync: FIFinderSync {
         let paths = selection.map(\.path)
         guard !paths.isEmpty else { return }
         dispatch("advancedRename", paths: paths)
+    }
+
+    @objc func inspectZIP(_ sender: NSMenuItem) {
+        let (selection, _) = resolveContext()
+        let archives = selection.filter { $0.pathExtension.lowercased() == "zip" }
+        if !archives.isEmpty { dispatch("inspectZIP", paths: archives.map(\.path)) }
     }
 
     private func dispatch(_ operation: String, paths: [String], argument: String? = nil) {
