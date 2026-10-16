@@ -136,6 +136,8 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         case "pdfRotate":
             let deg = request.argument.flatMap(Int.init) ?? 90
             runPDFRotate(paths: request.paths, degrees: deg)
+        case "pdfReorder":
+            runPDFReorder(paths: request.paths)
         case "pdfOCR":
             runPDFOCR(paths: request.paths)
         case "pdfExtractImages":
@@ -351,11 +353,64 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
 
     // MARK: - PDF Toolkit Handlers
 
+    private func promptOrder(labels: [String], title: String) -> [Int]? {
+        guard !labels.isEmpty else { return nil }
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = "Enter each 1-based index once, in your preferred order:\n" +
+            labels.prefix(16).enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n") +
+            (labels.count > 16 ? "\n… and \(labels.count - 16) more" : "")
+        alert.addButton(withTitle: "Continue")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: (1...labels.count).map(String.init).joined(separator: ","))
+        field.placeholderString = "1,2,3"
+        field.frame = NSRect(x: 0, y: 0, width: 360, height: 24)
+        alert.accessoryView = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let tokens = field.stringValue.split(separator: ",", omittingEmptySubsequences: false)
+        let numbers = tokens.compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        guard numbers.count == labels.count,
+              numbers.sorted() == Array(1...labels.count) else {
+            report("List every index exactly once, separated by commas.", title: "Invalid Order")
+            return nil
+        }
+        return numbers.map { $0 - 1 }
+    }
+
     private func runPDFMerge(paths: [String]) {
+        guard !paths.isEmpty else { return }
         let urls = paths.map { URL(fileURLWithPath: $0) }
+        let indices: [Int]
+        if paths.count > 1 {
+            guard let chosen = promptOrder(labels: urls.map(\.lastPathComponent),
+                                           title: "Arrange PDF Merge Inputs") else { return }
+            indices = chosen
+        } else { indices = [0] }
+        let ordered = indices.map { urls[$0] }
         queueOperation(title: "Merge into PDF", operation: "pdfMerge", paths: paths) { token, progress in
-            let merged = try PDFToolkit.merge(urls: urls, progress: progress, shouldCancel: { token.isCancelled })
+            let merged = try PDFToolkit.merge(urls: ordered, progress: progress,
+                                              shouldCancel: { token.isCancelled })
             return JobOutcome(outputs: [merged])
+        }
+    }
+
+    private func runPDFReorder(paths: [String]) {
+        guard paths.count == 1, let path = paths.first else {
+            report("Select one PDF to reorder its pages.", title: "Reorder PDF")
+            return
+        }
+        let url = URL(fileURLWithPath: path)
+        guard let pdf = PDFDocument(url: url), pdf.pageCount > 0,
+              !pdf.isEncrypted, !pdf.isLocked else {
+            report("The PDF is locked, encrypted, or unreadable.", title: "Reorder PDF")
+            return
+        }
+        guard let order = promptOrder(labels: (1...pdf.pageCount).map { "Page \($0)" },
+                                      title: "Reorder PDF Pages") else { return }
+        queueOperation(title: "Reorder PDF pages", operation: "pdfReorder", paths: [path]) { token, progress in
+            if token.isCancelled { throw CancellationError() }
+            let output = try PDFToolkit.reorder(url: url, pageOrder: order, progress: progress)
+            return JobOutcome(outputs: [output])
         }
     }
 
