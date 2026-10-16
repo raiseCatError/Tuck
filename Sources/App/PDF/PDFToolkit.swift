@@ -291,9 +291,19 @@ public enum PDFToolkit {
         guard let doc = PDFDocument(url: url) else {
             throw PDFMergeError.unreadableFile(url.lastPathComponent)
         }
+        guard !doc.isEncrypted, !doc.isLocked else {
+            throw PDFMergeError.encryptedFile(url.lastPathComponent)
+        }
+        guard doc.pageCount > 0,
+              pageOrder.count == doc.pageCount,
+              pageOrder.sorted() == Array(0..<doc.pageCount) else {
+            throw PDFMergeError.unreadableFile("The page order must contain every page exactly once.")
+        }
         let reorderedDoc = PDFDocument()
         for (newPos, origPos) in pageOrder.enumerated() {
-            guard origPos >= 0, origPos < doc.pageCount, let page = doc.page(at: origPos) else { continue }
+            guard let page = doc.page(at: origPos) else {
+                throw PDFMergeError.unreadableFile("Page \(origPos + 1) is unreadable.")
+            }
             reorderedDoc.insert(page, at: newPos)
         }
         guard reorderedDoc.pageCount > 0 else { throw PDFMergeError.noInputs }

@@ -104,7 +104,8 @@ enum Toolchain {
     static func run(_ tool: Tool, _ arguments: [String],
                     timeout: TimeInterval = 300,
                     shouldCancel: (() -> Bool)? = nil,
-                    workingDirectory: URL? = nil) throws -> ToolResult {
+                    workingDirectory: URL? = nil,
+                    environment: [String: String]? = nil) throws -> ToolResult {
         guard (shouldCancel?() ?? false) == false else { throw ToolError.cancelled }
         let capture = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("tuck-tool-\(UUID().uuidString)", isDirectory: true)
@@ -126,6 +127,7 @@ enum Toolchain {
         let process = Process()
         process.executableURL = tool.url
         process.arguments = arguments
+        if let environment { process.environment = environment }
         if let workingDirectory { process.currentDirectoryURL = workingDirectory }
         process.standardOutput = outHandle
         process.standardError = errHandle

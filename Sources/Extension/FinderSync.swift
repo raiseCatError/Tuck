@@ -21,6 +21,7 @@ final class TuckFinderSync: FIFinderSync {
         static let pdfOCR = 406
         static let pdfExtractImages = 407
         static let pdfToImages = 408
+        static let pdfReorder = 409
 
         // Image Toolkit tags
         static let imgToJPEG = 500
@@ -159,6 +160,8 @@ final class TuckFinderSync: FIFinderSync {
                 item.action = #selector(findDuplicates(_:))
             case .zipInspector:
                 item.action = #selector(inspectZIP(_:))
+            case .customActions:
+                item.submenu = makeCustomActionMenu()
             }
             root.addItem(item)
         }
@@ -191,6 +194,39 @@ final class TuckFinderSync: FIFinderSync {
         let mi = root.addItem(withTitle: "Move To", action: nil, keyEquivalent: "")
         mi.submenu = move
         return root
+    }
+
+    private func makeCustomActionMenu() -> NSMenu {
+        let menu = NSMenu(title: "Custom Actions")
+        let selection = menuSelection ?? selected
+        let contextPaths = selection.map(\.path)
+        for configured in CustomActionPreferences.all where configured.enabled {
+            // Test file/folder types only. Do not recurse folders or probe
+            // executables while Finder is constructing a context menu.
+            guard !contextPaths.isEmpty, contextPaths.count <= 256 else { continue }
+            let compatible = selection.allSatisfy { url in
+                guard let values = try? url.resourceValues(
+                    forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey]),
+                    values.isSymbolicLink != true else { return false }
+                switch configured.selection {
+                case .files: return values.isRegularFile == true
+                case .folders: return values.isDirectory == true
+                case .any: return values.isRegularFile == true || values.isDirectory == true
+                }
+            }
+            guard compatible else { continue }
+            let item = menu.addItem(withTitle: configured.title,
+                                    action: #selector(customAction(_:)), keyEquivalent: "")
+            item.representedObject = configured.id.uuidString
+        }
+        return menu
+    }
+
+    @objc func customAction(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        let (selection, _) = resolveContext()
+        guard !selection.isEmpty else { return }
+        dispatch("customAction", paths: selection.map(\.path), argument: id)
     }
 
     private func makeFileMenu() -> NSMenu {
@@ -252,6 +288,9 @@ final class TuckFinderSync: FIFinderSync {
 
             let rotateItem = menu.addItem(withTitle: "Rotate Pages", action: nil, keyEquivalent: "")
             rotateItem.submenu = rotateSubmenu
+
+            let reorder = menu.addItem(withTitle: "Reorder Pages…", action: #selector(pdfAction(_:)), keyEquivalent: "")
+            reorder.tag = Tag.pdfReorder
 
             menu.addItem(.separator())
             let ocr = menu.addItem(withTitle: "OCR (Recognize Text)…", action: #selector(pdfAction(_:)), keyEquivalent: "")
@@ -416,6 +455,8 @@ final class TuckFinderSync: FIFinderSync {
             dispatch("pdfExtractImages", paths: paths)
         case Tag.pdfToImages:
             dispatch("pdfToImages", paths: paths)
+        case Tag.pdfReorder:
+            dispatch("pdfReorder", paths: paths)
         default:
             break
         }
