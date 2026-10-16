@@ -88,6 +88,9 @@ enum RecipeRunner {
     private static func process(_ recipe: SavedRecipe, source: URL,
                                 shouldCancel: @escaping @Sendable () -> Bool) throws -> URL {
         let fm = FileManager.default
+        guard Spill.root().path.hasPrefix("/Volumes/") else {
+            throw UndoError.unsafe("Connect a writable external scratch volume before running a recipe.")
+        }
         let work = try WorkArea(beside: source)
         defer { work.clean() }
         // Recipes can create many encoded intermediates; require a mounted
@@ -106,7 +109,10 @@ enum RecipeRunner {
             let next: URL
             switch step.kind {
             case .resizeLongestEdge:
-                next = try ImageToolkit.resize(url: current, mode: .longestEdge(Int(step.value)!),
+                guard let edge = Int(step.value) else {
+                    throw UndoError.unsafe("Invalid resize step.")
+                }
+                next = try ImageToolkit.resize(url: current, mode: .longestEdge(edge),
                     shouldCancel: shouldCancel)
             case .convert:
                 next = try ImageToolkit.convert(url: current, targetFormat: step.value,
