@@ -700,31 +700,66 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
 
         let alert = NSAlert()
         alert.messageText = "Advanced Batch Rename"
-        alert.informativeText = "Configure find and replace for selected filenames."
+        alert.informativeText = "Choose a rule. Find/Regex: pattern + replacement. Prefix/Suffix: prefix + suffix. Number: prefix + start,digits. Extension: new extension in the first field."
         alert.addButton(withTitle: "Preview")
         alert.addButton(withTitle: "Cancel")
 
         let stack = NSStackView()
         stack.orientation = .vertical
-        stack.spacing = 6
-        let findField = NSTextField(string: "")
-        findField.placeholderString = "Find text"
-        let replaceField = NSTextField(string: "")
-        replaceField.placeholderString = "Replace with"
-        stack.addArrangedSubview(findField)
-        stack.addArrangedSubview(replaceField)
-        stack.frame = NSRect(x: 0, y: 0, width: 330, height: 60)
+        stack.spacing = 8
+        let mode = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 340, height: 26), pullsDown: false)
+        mode.addItems(withTitles: ["Find & Replace", "Regex Replace", "Prefix / Suffix",
+                                    "Numbered Sequence", "Change Extension"])
+        let first = NSTextField(string: "")
+        first.placeholderString = "Pattern / prefix / new extension"
+        let second = NSTextField(string: "")
+        second.placeholderString = "Replacement / suffix / start,digits"
+        stack.addArrangedSubview(mode)
+        stack.addArrangedSubview(first)
+        stack.addArrangedSubview(second)
+        stack.frame = NSRect(x: 0, y: 0, width: 340, height: 94)
         alert.accessoryView = stack
 
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        guard !findField.stringValue.isEmpty else {
-            report("Enter a nonempty search term before renaming.", title: "Invalid Rename")
+        let rule: RenameRule
+        switch mode.indexOfSelectedItem {
+        case 0:
+            guard !first.stringValue.isEmpty else {
+                report("Find text cannot be empty.", title: "Invalid Rename")
+                return
+            }
+            rule = RenameRule(op: .findReplace(find: first.stringValue,
+                                               replace: second.stringValue, isRegex: false))
+        case 1:
+            do { _ = try NSRegularExpression(pattern: first.stringValue) }
+            catch {
+                report(error.localizedDescription, title: "Invalid Regular Expression")
+                return
+            }
+            rule = RenameRule(op: .findReplace(find: first.stringValue,
+                                               replace: second.stringValue, isRegex: true))
+        case 2:
+            guard !first.stringValue.isEmpty || !second.stringValue.isEmpty else {
+                report("Enter a prefix or suffix.", title: "Invalid Rename")
+                return
+            }
+            rule = RenameRule(op: .prefixSuffix(prefix: first.stringValue, suffix: second.stringValue))
+        case 3:
+            let numbers = second.stringValue.isEmpty ? ["1", "3"] :
+                second.stringValue.split(separator: ",").map(String.init)
+            guard numbers.count == 2, let start = Int(numbers[0]), let digits = Int(numbers[1]),
+                  start >= 0, digits >= 1, digits <= 12 else {
+                report("Enter start,digits (example: 1,3).", title: "Invalid Numbering")
+                return
+            }
+            rule = RenameRule(op: .numberedSequence(prefix: first.stringValue,
+                                                     start: start, digits: digits))
+        case 4:
+            rule = RenameRule(op: .changeExtension(newExtension: first.stringValue))
+        default:
             return
         }
-
-        let rule = RenameRule(op: .findReplace(
-            find: findField.stringValue, replace: replaceField.stringValue, isRegex: false))
         let plan = AdvancedRenameToolkit.preview(urls: urls, rule: rule)
         let collisions = plan.filter(\.hasCollision)
         guard collisions.isEmpty else {
