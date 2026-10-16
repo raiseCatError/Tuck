@@ -9,11 +9,33 @@ import Darwin
 final class WatchedFolderManager {
     static let shared = WatchedFolderManager()
 
-    private struct Stamp: Equatable {
+    struct Stamp: Equatable {
         let device: UInt64
         let inode: UInt64
         let bytes: UInt64
         let modified: Date
+    }
+
+    struct Decision {
+        let ready: [String]
+        let known: [String: Stamp]
+        let retry: Bool
+    }
+
+    /// Only acknowledge stamps that survived both observations and are old
+    /// enough to be complete. Changes still arriving remain pending.
+    static func decide(known: [String: Stamp], first: [String: Stamp],
+                       second: [String: Stamp], now: Date) -> Decision {
+        var acknowledged = known.filter { second[$0.key] != nil }
+        var ready: [String] = []
+        for (path, stamp) in first where known[path] != stamp {
+            guard let later = second[path], later == stamp, later.bytes > 0,
+                  now.timeIntervalSince(later.modified) >= 1 else { continue }
+            acknowledged[path] = later
+            ready.append(path)
+        }
+        return Decision(ready: ready.sorted(), known: acknowledged,
+                        retry: second.contains { acknowledged[$0.key] != $0.value })
     }
     private struct Watch {
         let generation: UUID
@@ -122,20 +144,12 @@ final class WatchedFolderManager {
         guard let second = snapshot(watch.folder) else { return }
         let recipe = RecipePreferences.all.first { $0.id == watch.rule.recipeID }
 
-        // Remove vanished entries, but only advance a changed file's watermark
-        // after its content has been stable and eligible for processing.
-        var known = watch.known.filter { second[$0.key] != nil }
-        var needsRecheck = false
-        for (path, firstStamp) in changed {
-            guard let secondStamp = second[path] else { continue }
-            if firstStamp != secondStamp || secondStamp.bytes == 0 ||
-                Date().timeIntervalSince(secondStamp.modified) < 1 {
-                needsRecheck = true
-                continue
-            }
-            // Only enqueue if this exact rule generation is still active.
-            guard watches[id]?.generation == generation, !WatchRulePreferences.paused else { return }
-            if let recipe {
+        let decision = Self.decide(known: watch.known, first: first,
+                                   second: second, now: Date())
+        if let recipe {
+            for path in decision.ready {
+                guard watches[id]?.generation == generation,
+                      !WatchRulePreferences.paused else { return }
                 let input = path
                 JobManager.shared.enqueue(title: "Watched: \(watch.rule.name)",
                     operation: "watchedRecipe", paths: [input], canUndo: true) { token, progress in
@@ -143,16 +157,10 @@ final class WatchedFolderManager {
                                              shouldCancel: { token.isCancelled }, progress: progress)
                 }
             }
-            known[path] = secondStamp
-        }
-        // Newly discovered files present only in the second snapshot need
-        // their own stability check on the next pass.
-        if second.contains(where: { known[$0.key] != $0.value }) {
-            needsRecheck = true
         }
         guard watches[id]?.generation == generation else { return }
-        watches[id]?.known = known
-        if needsRecheck {
+        watches[id]?.known = decision.known
+        if decision.retry {
             Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 guard let self, self.watches[id]?.generation == generation else { return }
