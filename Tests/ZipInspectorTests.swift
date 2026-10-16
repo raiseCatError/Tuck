@@ -49,6 +49,33 @@ struct ZipInspectorTests {
             catch { rejected = true }
             assert(rejected, "Traversal must be refused before extraction.")
         }
+        // A benign central name with a different local-header filename is
+        // unsafe: the extractor may interpret local headers during extraction.
+        // Reject it even though the central directory alone looks valid.
+        let validArchive = [UInt8](try Data(contentsOf: archive))
+        guard let firstLocal = (0..<(validArchive.count - 4)).first(where: {
+            validArchive[$0] == 0x50 && validArchive[$0 + 1] == 0x4b &&
+            validArchive[$0 + 2] == 0x03 && validArchive[$0 + 3] == 0x04
+        }) else { fatalError("Fixture has no local ZIP header") }
+        let localNameOffset = firstLocal + 30
+        var inconsistent = validArchive
+        inconsistent[localNameOffset] = inconsistent[localNameOffset] == 0x78 ? 0x79 : 0x78
+        let mismatched = tmp.appendingPathComponent("mismatched-local.zip")
+        try Data(inconsistent).write(to: mismatched)
+        var refusedLocalMismatch = false
+        do { _ = try ZipInspector.inspect(mismatched) }
+        catch { refusedLocalMismatch = true }
+        assert(refusedLocalMismatch, "Local and central ZIP filenames must agree.")
+
+        // Requesting an entry that isn't in the validated snapshot must
+        // fail rather than silently extracting a different subset.
+        var refusedSelection = false
+        do {
+            _ = try ZipInspector.extract(archive: archive, destinationFolder: tmp,
+                                         selected: ["not-in-this-archive.txt"])
+        } catch { refusedSelection = true }
+        assert(refusedSelection, "Missing ZIP entries must be refused.")
+
         // unzip interprets entry selections as argv options or filename globs.
         // Refuse these at inspection instead of broadening a selective extract.
         let original = [UInt8](try Data(contentsOf: archive))
