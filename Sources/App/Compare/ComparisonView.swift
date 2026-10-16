@@ -45,8 +45,10 @@ private struct ComparisonView: View {
 
     private var pdf: Bool { source.pathExtension.lowercased() == "pdf" &&
         output.pathExtension.lowercased() == "pdf" }
-    private var sourcePDF: PDFDocument? { pdf ? PDFDocument(url: source) : nil }
-    private var outputPDF: PDFDocument? { pdf ? PDFDocument(url: output) : nil }
+    @State private var sourcePDF: PDFDocument?
+    @State private var outputPDF: PDFDocument?
+    @State private var sourcePreview: NSImage?
+    @State private var outputPreview: NSImage?
     private var pageLimit: Int { min(sourcePDF?.pageCount ?? 0, outputPDF?.pageCount ?? 0) }
 
     var body: some View {
@@ -86,6 +88,7 @@ private struct ComparisonView: View {
             HStack {
                 Text("Zoom")
                 Slider(value: $zoom, in: 0.5...2, step: 0.1).frame(width: 135)
+                    .accessibilityLabel("Preview zoom")
                 Text("\(Int(zoom * 100))%").monospacedDigit()
                 Spacer()
                 if split {
@@ -100,8 +103,8 @@ private struct ComparisonView: View {
                 let height = max(1, geometry.size.height)
                 if split {
                     ZStack(alignment: .leading) {
-                        preview(output, name: "After").frame(width: width, height: height)
-                        preview(source, name: "Before")
+                        preview(outputPreview, url: output, name: "After").frame(width: width, height: height)
+                        preview(sourcePreview, url: source, name: "Before")
                             .frame(width: width, height: height)
                             .mask(alignment: .leading) {
                                 Rectangle().frame(width: width * fraction)
@@ -113,8 +116,8 @@ private struct ComparisonView: View {
                     .frame(width: width, height: height)
                 } else {
                     HStack(spacing: 12) {
-                        preview(source, name: "Before")
-                        preview(output, name: "After")
+                        preview(sourcePreview, url: source, name: "Before")
+                        preview(outputPreview, url: output, name: "After")
                     }
                 }
             }
@@ -127,16 +130,18 @@ private struct ComparisonView: View {
                 .font(.caption2).foregroundStyle(.secondary)
         }
         .padding(20).frame(minWidth: 720, minHeight: 480)
+        .onAppear { updatePreviews() }
+        .onChange(of: page) { _, _ in updatePreviews() }
     }
 
-    @ViewBuilder private func preview(_ url: URL, name: String) -> some View {
+    @ViewBuilder private func preview(_ cached: NSImage?, url: URL, name: String) -> some View {
         VStack(spacing: 6) {
             Text(name).font(.headline)
             GeometryReader { geo in
                 ZStack {
                     RoundedRectangle(cornerRadius: 5)
                         .fill(Color(nsColor: .textBackgroundColor))
-                    if let image = thumbnail(url, maxDimension: 1600) {
+                    if let image = cached {
                         Image(nsImage: image)
                             .resizable().interpolation(.high).scaledToFit()
                             .scaleEffect(zoom)
@@ -153,10 +158,19 @@ private struct ComparisonView: View {
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func thumbnail(_ url: URL, maxDimension: Int) -> NSImage? {
+    private func updatePreviews() {
         if pdf {
-            guard let doc = PDFDocument(url: url),
-                  page < doc.pageCount, let pdfPage = doc.page(at: page) else { return nil }
+            if sourcePDF == nil { sourcePDF = PDFDocument(url: source) }
+            if outputPDF == nil { outputPDF = PDFDocument(url: output) }
+        }
+        sourcePreview = thumbnail(source, document: sourcePDF, maxDimension: 1600)
+        outputPreview = thumbnail(output, document: outputPDF, maxDimension: 1600)
+    }
+
+    private func thumbnail(_ url: URL, document: PDFDocument?, maxDimension: Int) -> NSImage? {
+        if pdf {
+            guard let document, page < document.pageCount,
+                  let pdfPage = document.page(at: page) else { return nil }
             return pdfPage.thumbnail(of: NSSize(width: maxDimension, height: maxDimension),
                                      for: .mediaBox)
         }
