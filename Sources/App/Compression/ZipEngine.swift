@@ -68,7 +68,7 @@ enum ZipEngine {
     private static func withSevenZip(_ tool: Tool, urls: [URL], parent: URL, work: WorkArea,
                                      shouldCancel: @escaping @Sendable () -> Bool) throws -> Outcome? {
         let temporary = work.makeTemporary("archive", extension: "zip")
-        var arguments = ["a", "-tzip", "-mx=9", "-mmt=on", "-snl", "-bd", "-y", temporary.path]
+        var arguments = ["a", "-tzip", "-mx=9", "-mmt=2", "-snl", "-bd", "-y", temporary.path, "--"]
         if urls.count == 1 {
             arguments.append(urls[0].lastPathComponent)
         } else {
@@ -108,7 +108,7 @@ enum ZipEngine {
             workingDirectory = nil
         } else {
             command = Tool(name: "zip", url: URL(fileURLWithPath: "/usr/bin/zip"))
-            arguments = ["-r", "-X", "-q", temporary.path, "--"] + urls.map(\.lastPathComponent)
+            arguments = ["-r", "-y", "-X", "-q", temporary.path, "--"] + urls.map(\.lastPathComponent)
             workingDirectory = source.deletingLastPathComponent()
         }
         do {
