@@ -16,13 +16,14 @@ final class WatchedFolderManager {
         let modified: Date
     }
     private struct Watch {
+        let generation: UUID
         let rule: WatchedFolderRule
         let folder: URL
         let source: DispatchSourceFileSystemObject
         var known: [String: Stamp]
     }
     private var watches: [UUID: Watch] = [:]
-    private var checks = Set<UUID>()
+    private var checks: [UUID: UUID] = [:]
     private var observers: [NSObjectProtocol] = []
 
     private init() {
@@ -59,7 +60,7 @@ final class WatchedFolderManager {
                 Task { @MainActor in self?.scheduleScan(id: rule.id) }
             }
             source.setCancelHandler { close(handle) }
-            watches[rule.id] = Watch(rule: rule, folder: folder, source: source,
+            watches[rule.id] = Watch(generation: UUID(), rule: rule, folder: folder, source: source,
                                      known: baseline)
             source.resume()
         }
@@ -89,32 +90,52 @@ final class WatchedFolderManager {
     }
 
     private func scheduleScan(id: UUID) {
-        guard watches[id] != nil, checks.insert(id).inserted else { return }
+        guard let watch = watches[id], checks[id] != watch.generation else { return }
+        let generation = watch.generation
+        checks[id] = generation
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 900_000_000)
-            await self?.checkChanges(id: id)
+            await self?.checkChanges(id: id, generation: generation)
         }
     }
 
-    private func checkChanges(id: UUID) async {
-        defer { checks.remove(id) }
-        guard let watch = watches[id], !WatchRulePreferences.paused else { return }
+    private func checkChanges(id: UUID, generation: UUID) async {
+        defer {
+            // Do not erase the state for a newer watcher if this task was
+            // suspended while an old rule was disabled or reloaded.
+            if checks[id] == generation { checks.removeValue(forKey: id) }
+        }
+        guard let watch = watches[id], watch.generation == generation,
+              !WatchRulePreferences.paused else { return }
         guard let first = snapshot(watch.folder) else { return }
-        let new = first.filter { watch.known[$0.key] != $0.value }
-        guard !new.isEmpty else {
+        let changed = first.filter { watch.known[$0.key] != $0.value }
+        guard !changed.isEmpty else {
             watches[id]?.known = first
             return
         }
-        // A copied/downloaded image must be stable over a second before any
-        // recipe begins. Never process a partial/in-progress download.
+
+        // The second observation must match; an unstable download stays
+        // pending instead of being marked processed and forgotten.
         try? await Task.sleep(nanoseconds: 1_000_000_000)
-        guard let live = watches[id], live.folder == watch.folder else { return }
+        guard let live = watches[id], live.generation == generation,
+              !WatchRulePreferences.paused else { return }
         guard let second = snapshot(watch.folder) else { return }
         let recipe = RecipePreferences.all.first { $0.id == watch.rule.recipeID }
-        if let recipe {
-            for (path, stamp) in new where second[path] == stamp &&
-                stamp.bytes > 0 && Date().timeIntervalSince(stamp.modified) >= 1 {
-                if watches[id]?.known[path] == stamp { continue }
+
+        // Remove vanished entries, but only advance a changed file's watermark
+        // after its content has been stable and eligible for processing.
+        var known = watch.known.filter { second[$0.key] != nil }
+        var needsRecheck = false
+        for (path, firstStamp) in changed {
+            guard let secondStamp = second[path] else { continue }
+            if firstStamp != secondStamp || secondStamp.bytes == 0 ||
+                Date().timeIntervalSince(secondStamp.modified) < 1 {
+                needsRecheck = true
+                continue
+            }
+            // Only enqueue if this exact rule generation is still active.
+            guard watches[id]?.generation == generation, !WatchRulePreferences.paused else { return }
+            if let recipe {
                 let input = path
                 JobManager.shared.enqueue(title: "Watched: \(watch.rule.name)",
                     operation: "watchedRecipe", paths: [input], canUndo: true) { token, progress in
@@ -122,14 +143,22 @@ final class WatchedFolderManager {
                                              shouldCancel: { token.isCancelled }, progress: progress)
                 }
             }
+            known[path] = secondStamp
         }
-        watches[id]?.known = second
-        // Files still arriving may not emit another directory event when only
-        // bytes change; check one more time after a slow writer is observed.
-        if new.contains(where: { second[$0.key] != $0.value }) {
+        // Newly discovered files present only in the second snapshot need
+        // their own stability check on the next pass.
+        if second.contains(where: { known[$0.key] != $0.value }) {
+            needsRecheck = true
+        }
+        guard watches[id]?.generation == generation else { return }
+        watches[id]?.known = known
+        if needsRecheck {
             Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 500_000_000)
-                self?.scheduleScan(id: id)
+                guard let self, self.watches[id]?.generation == generation else { return }
+                // Defer beyond the current check's cleanup so the next scan
+                // obtains the guard and cannot be lost.
+                self.scheduleScan(id: id)
             }
         }
     }
