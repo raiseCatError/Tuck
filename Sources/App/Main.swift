@@ -222,8 +222,8 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
                 },
                 shouldCancel: { token.isCancelled }
             )
-            if token.isCancelled { throw CancellationError() }
             let outputs = outcome.results.compactMap(\.output)
+            if token.isCancelled && outputs.isEmpty { throw CancellationError() }
             if outputs.isEmpty {
                 let details = outcome.failures.map { "\($0.0.lastPathComponent): \($0.1.description)" }
                 throw UndoError.unsafe(details.isEmpty ? "Nothing was compressed." : details.joined(separator: "\n"))
@@ -240,7 +240,7 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
             let result = try FileWork.zip(paths, progress: { fraction in
                 progress(fraction, "Creating archive…")
             }, shouldCancel: { token.isCancelled })
-            if token.isCancelled { throw CancellationError() }
+            // The archive may already have been published when cancellation arrives.
             return [result.file]
         }
     }
@@ -345,7 +345,6 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         let urls = paths.map { URL(fileURLWithPath: $0) }
         queueOperation(title: "Merge into PDF", operation: "pdfMerge", paths: paths) { token, progress in
             let merged = try PDFToolkit.merge(urls: urls, progress: progress, shouldCancel: { token.isCancelled })
-            if token.isCancelled { throw CancellationError() }
             return [merged]
         }
     }
@@ -371,7 +370,7 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         queueOperation(title: "Split PDF", operation: "pdfSplit", paths: [first]) { token, progress in
             let outputs = try PDFToolkit.split(url: url, rangeDescription: selectedRange,
                                                progress: progress, shouldCancel: { token.isCancelled })
-            if token.isCancelled { throw CancellationError() }
+            if token.isCancelled && outputs.isEmpty { throw CancellationError() }
             return outputs
         }
     }
@@ -380,7 +379,7 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         queueOperation(title: "Rotate PDF pages", operation: "pdfRotate", paths: paths) { token, progress in
             var outputs: [URL] = []
             for (index, path) in paths.enumerated() {
-                if token.isCancelled { throw CancellationError() }
+                if token.isCancelled { break }
                 progress(Double(index) / Double(paths.count), URL(fileURLWithPath: path).lastPathComponent)
                 if let output = try? PDFToolkit.rotate(url: URL(fileURLWithPath: path), degrees: degrees) {
                     outputs.append(output)
@@ -395,7 +394,7 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         queueOperation(title: "Recognize PDF text", operation: "pdfOCR", paths: paths) { token, progress in
             var outputs: [URL] = []
             for (index, path) in paths.enumerated() {
-                if token.isCancelled { throw CancellationError() }
+                if token.isCancelled { break }
                 let start = Double(index) / Double(paths.count)
                 let source = URL(fileURLWithPath: path)
                 if let output = try? PDFToolkit.ocr(url: source, progress: { fraction, note in
@@ -404,7 +403,7 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
                     outputs.append(output)
                 }
             }
-            if token.isCancelled { throw CancellationError() }
+            if token.isCancelled && outputs.isEmpty { throw CancellationError() }
             guard !outputs.isEmpty else { throw UndoError.unsafe("No searchable PDFs could be generated.") }
             return outputs
         }
@@ -414,7 +413,7 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         queueOperation(title: "Extract PDF images", operation: "pdfExtractImages", paths: paths) { token, progress in
             var outputs: [URL] = []
             for (index, path) in paths.enumerated() {
-                if token.isCancelled { throw CancellationError() }
+                if token.isCancelled { break }
                 progress(Double(index) / Double(paths.count), URL(fileURLWithPath: path).lastPathComponent)
                 if let files = try? PDFToolkit.extractImages(url: URL(fileURLWithPath: path)) {
                     outputs.append(contentsOf: files)
@@ -429,7 +428,7 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         queueOperation(title: "Export PDF pages as images", operation: "pdfToImages", paths: paths) { token, progress in
             var outputs: [URL] = []
             for (index, path) in paths.enumerated() {
-                if token.isCancelled { throw CancellationError() }
+                if token.isCancelled { break }
                 progress(Double(index) / Double(paths.count), URL(fileURLWithPath: path).lastPathComponent)
                 if let files = try? PDFToolkit.renderPagesToImages(url: URL(fileURLWithPath: path)) {
                     outputs.append(contentsOf: files)
@@ -446,10 +445,14 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         queueOperation(title: "Convert images to \(targetFormat.uppercased())", operation: "imageConvert", paths: paths) { token, progress in
             var outputs: [URL] = []
             for (index, path) in paths.enumerated() {
-                if token.isCancelled { throw CancellationError() }
+                if token.isCancelled { break }
                 let url = URL(fileURLWithPath: path)
                 progress(Double(index) / Double(paths.count), url.lastPathComponent)
-                if let output = try? ImageToolkit.convert(url: url, targetFormat: targetFormat) {
+                if let output = try? ImageToolkit.convert(
+                    url: url, targetFormat: targetFormat,
+                    progress: { fraction, detail in
+                        progress((Double(index) + fraction) / Double(paths.count), detail)
+                    }, shouldCancel: { token.isCancelled }) {
                     outputs.append(output)
                 }
             }
@@ -474,10 +477,16 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         queueOperation(title: "Resize images", operation: "imageResize", paths: paths) { token, progress in
             var outputs: [URL] = []
             for (index, path) in paths.enumerated() {
-                if token.isCancelled { throw CancellationError() }
+                if token.isCancelled { break }
                 let url = URL(fileURLWithPath: path)
                 progress(Double(index) / Double(paths.count), url.lastPathComponent)
-                if let output = try? ImageToolkit.resize(url: url, mode: mode) { outputs.append(output) }
+                if let output = try? ImageToolkit.resize(
+                    url: url, mode: mode,
+                    progress: { fraction, detail in
+                        progress((Double(index) + fraction) / Double(paths.count), detail)
+                    }, shouldCancel: { token.isCancelled }) {
+                    outputs.append(output)
+                }
             }
             guard !outputs.isEmpty else { throw UndoError.unsafe("No images could be resized.") }
             return outputs
@@ -496,7 +505,7 @@ final class TuckApplication: NSObject, NSApplicationDelegate {
         queueOperation(title: "Strip file metadata", operation: "metaStrip", paths: paths) { token, progress in
             var outputs: [URL] = []
             for (index, path) in paths.enumerated() {
-                if token.isCancelled { throw CancellationError() }
+                if token.isCancelled { break }
                 let url = URL(fileURLWithPath: path)
                 progress(Double(index) / Double(paths.count), url.lastPathComponent)
                 if let output = try? MetadataToolkit.strip(url: url) { outputs.append(output) }
