@@ -181,7 +181,12 @@ public enum ZipInspector {
             guard vals.isSymbolicLink != true else {
                 throw Invalid.malformed("Unexpected symbolic link after ZIP extraction.")
             }
-            let relative = String(file.path.dropFirst(stage.path.count + 1))
+            let rootComponents = stage.standardizedFileURL.pathComponents
+            let fileComponents = file.standardizedFileURL.pathComponents
+            guard fileComponents.starts(with: rootComponents) else {
+                throw Invalid.malformed("Extraction escaped the staging folder.")
+            }
+            let relative = fileComponents.dropFirst(rootComponents.count).joined(separator: "/")
             if vals.isRegularFile == true {
                 guard allowed.contains(relative),
                       let attrs = try? fm.attributesOfItem(atPath: file.path),
