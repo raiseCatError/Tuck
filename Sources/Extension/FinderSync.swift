@@ -162,6 +162,8 @@ final class TuckFinderSync: FIFinderSync {
                 item.action = #selector(inspectZIP(_:))
             case .customActions:
                 item.submenu = makeCustomActionMenu()
+            case .recipes:
+                item.submenu = makeRecipeMenu()
             }
             root.addItem(item)
         }
@@ -194,6 +196,23 @@ final class TuckFinderSync: FIFinderSync {
         let mi = root.addItem(withTitle: "Move To", action: nil, keyEquivalent: "")
         mi.submenu = move
         return root
+    }
+
+    private func makeRecipeMenu() -> NSMenu {
+        let menu = NSMenu(title: "Recipes")
+        for recipe in RecipePreferences.all {
+            let item = menu.addItem(withTitle: recipe.title,
+                                    action: #selector(runRecipe(_:)), keyEquivalent: "")
+            item.representedObject = recipe.id.uuidString
+        }
+        return menu
+    }
+
+    @objc func runRecipe(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        let (selection, _) = resolveContext()
+        guard !selection.isEmpty else { return }
+        dispatch("runRecipe", paths: selection.map(\.path), argument: id)
     }
 
     private func makeCustomActionMenu() -> NSMenu {
