@@ -18,10 +18,12 @@ struct FileTransferTests {
                                                mode: .copy)
         assert(first.failures.isEmpty && first.outputs.count == 1)
         assert(fm.fileExists(atPath: original.path))
-        assert(try CopyAsToolkit.sha256(url: first.outputs[0]) == originalHash)
+        let copiedHash = try CopyAsToolkit.sha256(url: first.outputs[0])
+        assert(copiedHash == originalHash)
         let second = try FileTransfer.transfer(paths: [original.path], to: destination, mode: .copy)
         assert(second.outputs.count == 1 && first.outputs[0] != second.outputs[0])
-        assert(try CopyAsToolkit.sha256(url: original) == originalHash)
+        let unchangedHash = try CopyAsToolkit.sha256(url: original)
+        assert(unchangedHash == originalHash)
 
         let folder = input.appendingPathComponent("folder", isDirectory: true)
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -34,7 +36,8 @@ struct FileTransferTests {
         let moved = try FileTransfer.transfer(paths: [child.path], to: destination, mode: .move)
         assert(moved.failures.isEmpty && moved.outputs.count == 1)
         assert(!fm.fileExists(atPath: child.path))
-        assert(String(data: try Data(contentsOf: moved.outputs[0]), encoding: .utf8) == "folder content")
+        let movedContent = try String(contentsOf: moved.outputs[0], encoding: .utf8)
+        assert(movedContent == "folder content")
         print("FileTransferTests passed")
     }
 }
