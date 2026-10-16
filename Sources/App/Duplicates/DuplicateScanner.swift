@@ -165,8 +165,7 @@ private struct DuplicatesView: View {
             if !model.running && !model.groups.isEmpty {
                 HStack {
                     TextField("Filter paths", text: $filter)
-                    Text("Potential savings: \(ByteCountFormatter.string(fromByteCount:
-                        Int64(model.groups.reduce(UInt64(0)) { $0 + $1.reclaimable }), countStyle: .file))")
+                    Text("Potential savings: \(savingsLabel)")
                         .font(.caption).foregroundStyle(.secondary)
                     Button("Move Selected to Trash…") { confirmTrash = true }
                         .disabled(selected.isEmpty)
@@ -218,6 +217,11 @@ private struct DuplicatesView: View {
         .alert("Duplicate cleanup refused", isPresented: $showError) {
             Button("OK", role: .cancel) {}
         } message: { Text(errorText) }
+    }
+
+    private var savingsLabel: String {
+        let bytes = model.groups.reduce(UInt64(0)) { $0 + $1.reclaimable }
+        return ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
     }
 
     private func removeSelected() throws {
