@@ -62,6 +62,32 @@ struct IPCTests {
 
         // The signer caps what it will send.
         assert(TuckRequest(operation: "zip", paths: Array(repeating: "/tmp", count: 300)).signedURL() == nil)
+        // Selection-size boundaries: all permitted inputs are represented,
+        // while oversized sets are rejected, never truncated.
+        for count in [1, 16, 17, 100, 256] {
+            let paths = (0..<count).map { "/tmp/file-\($0)" }
+            guard let signed = TuckRequest(operation: "zip", paths: paths).signedURL(),
+                  let verified = TuckRequest.verified(signed) else {
+                fatalError("Failed to round-trip a supported \(count)-item selection.")
+            }
+            assert(verified.paths == paths)
+        }
+        for count in [257, 1_000] {
+            let paths = (0..<count).map { "/tmp/file-\($0)" }
+            assert(TuckRequest(operation: "zip", paths: paths).signedURL() == nil)
+        }
+        let unicode = "/tmp/quote' space 👾 漢字 [test].png"
+        guard let unicodeURL = TuckRequest(operation: "copyAs", paths: [unicode]).signedURL() else {
+            fatalError("Valid Unicode path must be signable.")
+        }
+        assert(TuckRequest.verified(unicodeURL)?.paths == [unicode])
+
+        let overlongPayload = (0..<256).map {
+            "/tmp/\($0)-" + String(repeating: "界", count: 120)
+        }
+        assert(TuckRequest(operation: "zip", paths: overlongPayload).signedURL() == nil,
+               "A 64KB payload must not be silently shortened.")
+
 
         print("IPCTests passed")
     }

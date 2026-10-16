@@ -101,6 +101,7 @@ final class TuckFinderSync: FIFinderSync {
 
     override func menu(for kind: FIMenuKind) -> NSMenu? {
         guard kind == .contextualMenuForContainer || kind == .contextualMenuForItems else { return nil }
+        let startedAt = ProcessInfo.processInfo.systemUptime
         TuckPreferences.store.synchronize()
         let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first?.standardizedFileURL
         let selection = selected
@@ -167,7 +168,9 @@ final class TuckFinderSync: FIFinderSync {
             }
             root.addItem(item)
         }
-        TuckLog.extensionLogger.info("extension.menu kind=\(kind.rawValue) context=\(context.rawValue, privacy: .public) selection=\(selection.count) target=\(target != nil, privacy: .public) actions=\(entries.count)")
+        let menuMilliseconds = Int((ProcessInfo.processInfo.systemUptime - startedAt) * 1000)
+        // Counts and timings only: never log selected paths or signed URLs.
+        TuckLog.extensionLogger.info("extension.menu kind=\(kind.rawValue) context=\(context.rawValue, privacy: .public) selection=\(selection.count) target=\(target != nil, privacy: .public) actions=\(entries.count) elapsedMs=\(menuMilliseconds)")
         return root.items.isEmpty ? nil : root
     }
 

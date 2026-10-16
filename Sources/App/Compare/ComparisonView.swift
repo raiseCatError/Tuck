@@ -42,12 +42,15 @@ private struct ComparisonView: View {
     @State private var split = false
     @State private var fraction: Double = 0.5
     @State private var zoom: Double = 1
+    @State private var beforePreview: NSImage?
+    @State private var afterPreview: NSImage?
+    @State private var beforePages = 0
+    @State private var afterPages = 0
+    @State private var previewLoaded = false
 
     private var pdf: Bool { source.pathExtension.lowercased() == "pdf" &&
         output.pathExtension.lowercased() == "pdf" }
-    private var sourcePDF: PDFDocument? { pdf ? PDFDocument(url: source) : nil }
-    private var outputPDF: PDFDocument? { pdf ? PDFDocument(url: output) : nil }
-    private var pageLimit: Int { min(sourcePDF?.pageCount ?? 0, outputPDF?.pageCount ?? 0) }
+    private var pageLimit: Int { min(beforePages, afterPages) }
 
     var body: some View {
         VStack(spacing: 12) {
@@ -74,7 +77,7 @@ private struct ComparisonView: View {
                 }
                 Spacer()
                 if pdf {
-                    Text("Pages: \(sourcePDF?.pageCount ?? 0) → \(outputPDF?.pageCount ?? 0)")
+                    Text("Pages: \(beforePages) → \(afterPages)")
                     Button { page = max(0, page - 1) } label: { Image(systemName: "chevron.left") }
                         .disabled(page == 0)
                     Text("\(page + 1) / \(max(pageLimit, 1))")
@@ -100,8 +103,8 @@ private struct ComparisonView: View {
                 let height = max(1, geometry.size.height)
                 if split {
                     ZStack(alignment: .leading) {
-                        preview(output, name: "After").frame(width: width, height: height)
-                        preview(source, name: "Before")
+                        preview(afterPreview, url: output, name: "After").frame(width: width, height: height)
+                        preview(beforePreview, url: source, name: "Before")
                             .frame(width: width, height: height)
                             .mask(alignment: .leading) {
                                 Rectangle().frame(width: width * fraction)
@@ -113,12 +116,12 @@ private struct ComparisonView: View {
                     .frame(width: width, height: height)
                 } else {
                     HStack(spacing: 12) {
-                        preview(source, name: "Before")
-                        preview(output, name: "After")
+                        preview(beforePreview, url: source, name: "Before")
+                        preview(afterPreview, url: output, name: "After")
                     }
                 }
             }
-            if pdf && (sourcePDF?.pageCount != outputPDF?.pageCount) {
+            if pdf && beforePages != afterPages {
                 Label("The two PDFs have different page counts. Check structure and text separately.",
                       systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.orange)
@@ -127,22 +130,27 @@ private struct ComparisonView: View {
                 .font(.caption2).foregroundStyle(.secondary)
         }
         .padding(20).frame(minWidth: 720, minHeight: 480)
+        // Slider and zoom updates redraw cached thumbnails instead of
+        // re-decoding PDFs or large images on every interaction.
+        .task(id: page) { refreshPreviews() }
     }
 
-    @ViewBuilder private func preview(_ url: URL, name: String) -> some View {
+    @ViewBuilder private func preview(_ image: NSImage?, url: URL, name: String) -> some View {
         VStack(spacing: 6) {
             Text(name).font(.headline)
             GeometryReader { geo in
                 ZStack {
                     RoundedRectangle(cornerRadius: 5)
                         .fill(Color(nsColor: .textBackgroundColor))
-                    if let image = thumbnail(url, maxDimension: 1600) {
+                    if let image {
                         Image(nsImage: image)
                             .resizable().interpolation(.high).scaledToFit()
                             .scaleEffect(zoom)
                             .frame(width: geo.size.width, height: geo.size.height)
                             .clipped()
                             .accessibilityLabel("\(name) preview, \(url.lastPathComponent)")
+                    } else if !previewLoaded {
+                        ProgressView().accessibilityLabel("Loading \(name) preview")
                     } else {
                         ContentUnavailableView("Preview unavailable",
                             systemImage: "doc.questionmark",
@@ -153,22 +161,37 @@ private struct ComparisonView: View {
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func thumbnail(_ url: URL, maxDimension: Int) -> NSImage? {
+    private func refreshPreviews() {
+        previewLoaded = false
         if pdf {
-            guard let doc = PDFDocument(url: url),
-                  page < doc.pageCount, let pdfPage = doc.page(at: page) else { return nil }
-            return pdfPage.thumbnail(of: NSSize(width: maxDimension, height: maxDimension),
-                                     for: .mediaBox)
+            let original = PDFDocument(url: source)
+            let result = PDFDocument(url: output)
+            beforePages = original?.pageCount ?? 0
+            afterPages = result?.pageCount ?? 0
+            if page >= max(1, pageLimit) {
+                page = max(0, pageLimit - 1)
+            }
+            let dimension = NSSize(width: 1600, height: 1600)
+            beforePreview = original?.page(at: page)?.thumbnail(of: dimension, for: .mediaBox)
+            afterPreview = result?.page(at: page)?.thumbnail(of: dimension, for: .mediaBox)
+        } else {
+            beforePreview = rasterThumbnail(source)
+            afterPreview = rasterThumbnail(output)
         }
+        previewLoaded = true
+    }
+
+    private func rasterThumbnail(_ url: URL) -> NSImage? {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
               CGImageSourceGetCount(src) > 0,
               let image = CGImageSourceCreateThumbnailAtIndex(src, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceThumbnailMaxPixelSize: maxDimension,
+                kCGImageSourceThumbnailMaxPixelSize: 1600,
                 kCGImageSourceCreateThumbnailWithTransform: true
               ] as CFDictionary) else { return nil }
         return NSImage(cgImage: image, size: .zero)
     }
+
     private func bytes(_ url: URL) -> Int? {
         (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue
     }
