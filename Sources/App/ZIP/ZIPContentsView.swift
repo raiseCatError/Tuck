@@ -67,6 +67,7 @@ private struct ZIPContentsView: View {
                                 set: { on in if on { selected.insert(entry.name) }
                                        else { selected.remove(entry.name) } }
                             )).labelsHidden()
+                                .accessibilityLabel("Include \(entry.name) in extraction")
                             Image(systemName: entry.isDirectory ? "folder" : "doc")
                             Text(entry.name).textSelection(.enabled).lineLimit(2)
                             Spacer()
