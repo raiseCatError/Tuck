@@ -4,6 +4,7 @@ public enum JobStatus: String, Codable, Sendable {
     case queued
     case running
     case completed
+    case partial
     case failed
     case cancelled
 }
@@ -24,6 +25,28 @@ public struct JobItemStatus: Identifiable, Codable, Sendable {
     }
 }
 
+/// Per-input diagnostic retained even when some files in a batch succeed.
+public struct JobFailure: Codable, Sendable, Equatable {
+    public let inputPath: String
+    public let reason: String
+
+    public init(inputPath: String, reason: String) {
+        self.inputPath = inputPath
+        self.reason = reason
+    }
+}
+
+/// Worker results are explicit: successful outputs do not hide failed inputs.
+public struct JobOutcome: Sendable {
+    public let outputs: [URL]
+    public let failures: [JobFailure]
+
+    public init(outputs: [URL] = [], failures: [JobFailure] = []) {
+        self.outputs = outputs
+        self.failures = failures
+    }
+}
+
 public struct JobRecord: Identifiable, Codable, Sendable {
     public let id: UUID
     public let title: String
@@ -36,6 +59,7 @@ public struct JobRecord: Identifiable, Codable, Sendable {
     public var progressDetail: String
     public var items: [JobItemStatus]
     public var outputs: [String]
+    public var failures: [JobFailure]?
     public var canUndo: Bool
     public var isUndone: Bool
     /// Present only after the generated outputs have been fingerprinted.
@@ -53,6 +77,7 @@ public struct JobRecord: Identifiable, Codable, Sendable {
                 progressDetail: String = "Queued",
                 items: [JobItemStatus] = [],
                 outputs: [String] = [],
+                failures: [JobFailure]? = nil,
                 canUndo: Bool = false,
                 isUndone: Bool = false,
                 outputProofs: [OutputIdentity]? = nil) {
@@ -67,6 +92,7 @@ public struct JobRecord: Identifiable, Codable, Sendable {
         self.progressDetail = progressDetail
         self.items = items
         self.outputs = outputs
+        self.failures = failures
         self.canUndo = canUndo
         self.isUndone = isUndone
         self.outputProofs = outputProofs
