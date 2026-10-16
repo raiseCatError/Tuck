@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Foundation
+import PDFKit
 
 @main
 enum TuckEntry {
