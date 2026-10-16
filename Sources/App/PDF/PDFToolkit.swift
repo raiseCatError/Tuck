@@ -355,37 +355,49 @@ public enum PDFToolkit {
         return outputs
     }
 
-    /// Extracts embedded images from a PDF using pdfimages if available, falling back to page rendering if no images found.
+    /// Extract only genuine embedded raster assets, without substituting
+    /// page screenshots or overwriting an earlier extraction.
     public static func extractImages(url: URL,
                                      progress: @Sendable @escaping (Double, String) -> Void = { _, _ in },
                                      shouldCancel: @Sendable @escaping () -> Bool = { false }) throws -> [URL] {
-        let parentDir = url.deletingLastPathComponent()
+        guard let pdfimages = Toolchain.tool("pdfimages") else {
+            progress(1, "Install Poppler's pdfimages to extract embedded assets.")
+            return []
+        }
+        if shouldCancel() { throw CancellationError() }
+        let fm = FileManager.default
+        let parent = url.deletingLastPathComponent()
         let stem = url.deletingPathExtension().lastPathComponent
-        let outputFolder = parentDir.appendingPathComponent("\(stem)-images", isDirectory: true)
+        let staging = parent.appendingPathComponent(".tuck-images-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: staging, withIntermediateDirectories: false)
+        defer { try? fm.removeItem(at: staging) }
 
-        try FileManager.default.createDirectory(at: outputFolder, withIntermediateDirectories: true)
-
-        var extractedURLs: [URL] = []
-
-        // Try pdfimages tool first
-        if FileManager.default.fileExists(atPath: "/opt/homebrew/bin/pdfimages") {
-            let prefix = outputFolder.appendingPathComponent("img").path
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/pdfimages")
-            process.arguments = ["-png", url.path, prefix]
-            try? process.run()
-            process.waitUntilExit()
-
-            let contents = (try? FileManager.default.contentsOfDirectory(at: outputFolder, includingPropertiesForKeys: nil)) ?? []
-            extractedURLs = contents.filter { $0.pathExtension.lowercased() == "png" || $0.pathExtension.lowercased() == "jpg" }
+        // -all preserves JPEG/JP2/JBIG2 streams where possible instead of
+        // re-encoding everything as PNG.
+        let prefix = staging.appendingPathComponent("img").path
+        do {
+            try Toolchain.run(pdfimages, ["-all", url.path, prefix],
+                              timeout: 300, shouldCancel: shouldCancel)
+        } catch ToolError.cancelled {
+            throw CancellationError()
         }
-
-        // If no embedded images extracted or tool unavailable, do not claim page screenshots are extracted images
-        if extractedURLs.isEmpty {
-            progress(1.0, "No embedded raster assets found in document.")
+        if shouldCancel() { throw CancellationError() }
+        let extracted = try fm.contentsOfDirectory(at: staging,
+                                                     includingPropertiesForKeys: [.isRegularFileKey])
+            .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        guard !extracted.isEmpty else {
+            progress(1, "No embedded raster assets found in document.")
+            return []
         }
-
-        return extractedURLs
+        // Rename the entire staging directory atomically on the source volume.
+        // Every invocation gets a fresh folder; previous extracted images are
+        // never opened for writing or deleted.
+        let outputFolder = parent.appendingPathComponent(
+            "\(stem)-images-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try fm.moveItem(at: staging, to: outputFolder)
+        progress(1, "Extracted \(extracted.count) embedded image(s).")
+        return extracted.map { outputFolder.appendingPathComponent($0.lastPathComponent) }
     }
 
     /// Performs on-device Optical Character Recognition (OCR) via Apple Vision framework.
