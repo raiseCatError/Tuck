@@ -66,6 +66,28 @@ struct JobManagerTests {
         assert(manager.jobs.first(where: { $0.id == ids[0] })?.status == .completed)
         assert(manager.jobs.first(where: { $0.id == ids[2] })?.status == .completed)
 
+        // An active worker that publishes an output just before noticing
+        // cancellation must retain that output and a usable undo proof.
+        let partial = dir.appendingPathComponent("partial.png")
+        try Data("partial result".utf8).write(to: partial)
+        let partialId = manager.enqueue(title: "Partial", operation: "imageConvert",
+                                        paths: ["/tmp/input"], canUndo: true) { token, progress in
+            try await Task.sleep(nanoseconds: 60_000_000)
+            return [partial]
+        }
+        manager.cancel(jobId: partialId)
+        for _ in 0..<100 {
+            if let entry = manager.jobs.first(where: { $0.id == partialId }),
+               entry.status == .cancelled && entry.outputProofs != nil { break }
+            try await Task.sleep(nanoseconds: 30_000_000)
+        }
+        guard let cancelled = manager.jobs.first(where: { $0.id == partialId }) else {
+            fatalError("Cancelled job missing from history")
+        }
+        assert(cancelled.status == .cancelled)
+        assert(cancelled.outputs == [partial.path])
+        assert(cancelled.canUndo && cancelled.outputProofs?.count == 1)
+
         // Restarting Tuck must not show orphaned 'Running' forever.
         let interrupted = JobRecord(title: "Interrupted", operation: "test",
                                     status: .running, canUndo: false)
