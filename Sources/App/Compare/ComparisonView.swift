@@ -27,7 +27,7 @@ enum ComparisonWindow {
         windows[id] = window
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification,
                                                object: window, queue: .main) { _ in
-            MainActor.assumeIsolated { windows.removeValue(forKey: id) }
+            MainActor.assumeIsolated { _ = windows.removeValue(forKey: id) }
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
